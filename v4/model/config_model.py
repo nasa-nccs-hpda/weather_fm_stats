@@ -35,6 +35,8 @@ class RuntimeSettings:
     pipeline_branch_execution: str
     pipeline_resume_mode: str
     pipeline_summary_file: str
+    pipeline_max_workers_dataset: int
+    pipeline_chunk_size_fcst: int
 
 
 def _resolve_setting(cli_value, yaml_value, default_value):
@@ -73,6 +75,16 @@ def resolve_runtime_settings(args, config):
         config.get('pipeline_summary_file'),
         'run_summary.txt',
     )
+    pipeline_max_workers_dataset = _resolve_setting(
+        getattr(args, 'pipeline_max_workers_dataset', None),
+        config.get('pipeline_max_workers_dataset'),
+        None,
+    )
+    pipeline_chunk_size_fcst = _resolve_setting(
+        getattr(args, 'pipeline_chunk_size_fcst', None),
+        config.get('pipeline_chunk_size_fcst'),
+        2,
+    )
 
     valid_stats_types = {'regional', 'global', 'both'}
     valid_fail_policy = {'fail_fast', 'partial_ok'}
@@ -102,10 +114,27 @@ def resolve_runtime_settings(args, config):
     if not pipeline_summary_file or not str(pipeline_summary_file).strip():
         raise ValueError('pipeline_summary_file cannot be empty')
 
+    if pipeline_max_workers_dataset is not None:
+        try:
+            pipeline_max_workers_dataset = int(pipeline_max_workers_dataset)
+        except (TypeError, ValueError):
+            raise ValueError('pipeline_max_workers_dataset must be an integer')
+        if pipeline_max_workers_dataset < 1:
+            raise ValueError('pipeline_max_workers_dataset must be >= 1')
+
+    try:
+        pipeline_chunk_size_fcst = int(pipeline_chunk_size_fcst)
+    except (TypeError, ValueError):
+        raise ValueError('pipeline_chunk_size_fcst must be an integer')
+    if pipeline_chunk_size_fcst < 1:
+        raise ValueError('pipeline_chunk_size_fcst must be >= 1')
+
     return RuntimeSettings(
         stats_types=stats_types,
         pipeline_fail_policy=pipeline_fail_policy,
         pipeline_branch_execution=pipeline_branch_execution,
         pipeline_resume_mode=pipeline_resume_mode,
         pipeline_summary_file=pipeline_summary_file,
+        pipeline_max_workers_dataset=pipeline_max_workers_dataset,
+        pipeline_chunk_size_fcst=pipeline_chunk_size_fcst,
     )

@@ -1,4 +1,4 @@
-﻿'''CLI controller for selecting and running stats workflows.'''
+'''CLI controller for selecting and running stats workflows.'''
 
 import argparse
 import os
@@ -7,6 +7,7 @@ import traceback
 from datetime import datetime
 
 from model.config_model import resolve_runtime_settings
+from model.dataset_parallel_executor import run_parallel_source_dataset_build
 from model.dataset_processor import BatchDatasetProcessor
 from model.statistics_processor import StatisticsProcessor
 
@@ -41,6 +42,10 @@ def parse_arguments():
                         help='Pipeline resume mode')
     parser.add_argument('--pipeline_summary_file',
                         help='Pipeline summary filename in output directory')
+    parser.add_argument('--pipeline_max_workers_dataset', type=int,
+                        help='Maximum worker processes for dataset build stage')
+    parser.add_argument('--pipeline_chunk_size_fcst', type=int,
+                        help='Forecast init-date chunk size for dataset parallelism')
     # Processing options
     process_group = parser.add_argument_group('Processing options')
     process_group.add_argument('--check_only', action='store_true',
@@ -266,6 +271,8 @@ def print_runtime_contract(runtime_settings):
     print(f'  branch_execution={runtime_settings.pipeline_branch_execution}')
     print(f'  resume_mode={runtime_settings.pipeline_resume_mode}')
     print(f'  summary_file={runtime_settings.pipeline_summary_file}')
+    print(f'  max_workers_dataset={runtime_settings.pipeline_max_workers_dataset}')
+    print(f'  chunk_size_fcst={runtime_settings.pipeline_chunk_size_fcst}')
 
 
 def run_stats_branch(stats_kind, processor_config, dataset_files, init_dates,
@@ -331,25 +338,19 @@ def run_pipeline_mode(args, single_fcst_mode):
         print('[INFO] Resume mode is safe (full checkpointing pending later step)')
 
     print('[INFO] Stage 2/4: Source dataset build')
-    results = processor.process_batch(
-        target_coll=None, info_dir=args.info_dir, date_start_idx=None,
-        date_end_idx=None, check_only=False, skip_calc_mode=False,
-        single_fcst_mode=single_fcst_mode)
+    results = run_parallel_source_dataset_build(
+        args.config,
+        args.info_dir,
+        runtime_settings,
+        single_fcst_mode=single_fcst_mode,
+    )
 
     if results.get('status') != 'success':
         reason = results.get('reason', 'Unknown error')
         print(f'[ERROR] Dataset creation failed in pipeline mode: {reason}')
+        for err in results.get('errors', []):
+            print(f'  [ERROR] {err}')
         return 1
-
-    processor.save_processed_datasets(
-        results,
-        info_dir=args.info_dir,
-        date_start_idx=None,
-        date_end_idx=None,
-        target_coll=None,
-        single_fcst_mode=bool(single_fcst_mode),
-        skip_calc_mode=False,
-    )
 
     dataset_files = results.get('dataset_files', {})
     init_dates = results.get('init_dates', [])
@@ -494,7 +495,7 @@ def main():
             )
 
         # Phase 2: Statistics Calculation
-        if args.stats or args.date: # also run in single-fcst mode
+        if args.stats or args.date:  # also run in single-fcst mode
             print('\n==================================================')
             print('STATISTICS CALCULATION')
             print('==================================================')
@@ -587,3 +588,7 @@ def main():
         print(f'\n[ERROR] Unexpected error: {e}')
         traceback.print_exc()
         sys.exit(1)
+
+
+
+
