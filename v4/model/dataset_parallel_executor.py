@@ -108,6 +108,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                         base_processor.fcst_model.strip())
 
     chunk_results = []
+    built_fcst_this_run = False
     if process_fcst and _forecast_needs_processing(config_path, info_dir,
                                                    single_fcst_mode):
         spacing = base_processor.config.get('fcst_spacing', 1)
@@ -180,6 +181,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                 'reason': 'forecast_chunk_merge_failed',
                 'chunk_results': chunk_results,
             }
+        built_fcst_this_run = True
     elif process_fcst:
         print('[INFO] Forecast dataset already valid; skipping forecast '
               'chunk processing')
@@ -213,7 +215,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
     )
 
     dataset_files = dict(followup_results.get('dataset_files', {}))
-    if process_fcst:
+    if built_fcst_this_run:
         dataset_files['fcst'] = os.path.join(
             'outputs', base_processor._generate_output_filenm('fcst'))
 
@@ -225,3 +227,4 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         'leads': followup_results.get('leads', []),
         'chunk_results': chunk_results,
     }
+
