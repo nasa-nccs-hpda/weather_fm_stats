@@ -104,8 +104,8 @@ echo "Stats types to run: $stats_types (regional=$run_regional, global=$run_glob
 # Build one SLURM script for the entire workflow
 set pipeline_script = "${job_dir}/stats_pipeline.j"
 echo "#!/bin/csh -e" > $pipeline_script
-echo "#SBATCH --job-name=stats_v3_pipeline" >> $pipeline_script
-echo "#SBATCH --output=${log_dir}/stats_v3_pipeline.%j.out" >> $pipeline_script
+echo "#SBATCH --job-name=stats_v4_pipeline" >> $pipeline_script
+echo "#SBATCH --output=${log_dir}/stats_v4_pipeline.%j.out" >> $pipeline_script
 echo "#SBATCH --time=${pipeline_time}" >> $pipeline_script
 echo "#SBATCH --account=${account}" >> $pipeline_script
 echo "#SBATCH --partition=${partition}" >> $pipeline_script
@@ -124,16 +124,8 @@ echo "module load python/GEOSpyD" >> $pipeline_script
 echo "cd ${work_dir}" >> $pipeline_script
 echo "" >> $pipeline_script
 
-# Run one v3 pipeline job. For both stats types:
-# 1) run process+regional, then 2) run global stats using created datasets.
-if ($run_regional && $run_global) then
-    echo "python -u ${work_dir}/v3/stats_trimmed_v3.py --config ${versioned_yaml} --process --stats reg --info_dir ${sts_dir}" >> $pipeline_script
-    echo "python -u ${work_dir}/v3/stats_trimmed_v3.py --config ${versioned_yaml} --stats glo --info_dir ${sts_dir}" >> $pipeline_script
-else if ($run_regional) then
-    echo "python -u ${work_dir}/v3/stats_trimmed_v3.py --config ${versioned_yaml} --process --stats reg --info_dir ${sts_dir}" >> $pipeline_script
-else if ($run_global) then
-    echo "python -u ${work_dir}/v3/stats_trimmed_v3.py --config ${versioned_yaml} --process --stats glo --info_dir ${sts_dir}" >> $pipeline_script
-endif
+# Run one v4 orchestrator command.
+echo "python -u ${work_dir}/v4/stats_trimmed_v4.py --config ${versioned_yaml} --pipeline --stats_types ${stats_types} --info_dir ${sts_dir}" >> $pipeline_script
 
 if ($generate_only) then
     echo ""
@@ -150,7 +142,7 @@ if ($status != 0) then
 endif
 
 echo ""
-echo "Submitted single v3 pipeline job successfully."
+echo "Submitted single v4 pipeline job successfully."
 echo "Job ID: $pipeline_job_id"
 echo "Job script: $pipeline_script"
-echo "Log file: ${log_dir}/stats_v3_pipeline.${pipeline_job_id}.out"
+echo "Log file: ${log_dir}/stats_v4_pipeline.${pipeline_job_id}.out"

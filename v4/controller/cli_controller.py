@@ -6,9 +6,7 @@ import sys
 import traceback
 from datetime import datetime
 
-import xarray as xr
-
-from model.constants import VARS_LONG_MAP, VARS_SCALE_MAP, VARS_UNIT_MAP
+from model.config_model import resolve_runtime_settings
 from model.dataset_processor import BatchDatasetProcessor
 from model.statistics_processor import StatisticsProcessor
 
@@ -27,6 +25,22 @@ def parse_arguments():
     parser.add_argument('--save_dir', type=str,
                         help=('Directory to save output files (for single '
                               'forecast mode)'))
+    parser.add_argument('--pipeline', action='store_true',
+                        help='Run end-to-end single-job pipeline orchestration')
+    parser.add_argument('--stats_types',
+                        choices=['regional', 'global', 'both'],
+                        help='Pipeline stats branch selection')
+    parser.add_argument('--pipeline_fail_policy',
+                        choices=['fail_fast', 'partial_ok'],
+                        help='Pipeline failure handling policy')
+    parser.add_argument('--pipeline_branch_execution',
+                        choices=['parallel', 'sequential'],
+                        help='Pipeline branch execution mode')
+    parser.add_argument('--pipeline_resume_mode',
+                        choices=['off', 'safe'],
+                        help='Pipeline resume mode')
+    parser.add_argument('--pipeline_summary_file',
+                        help='Pipeline summary filename in output directory')
     # Processing options
     process_group = parser.add_argument_group('Processing options')
     process_group.add_argument('--check_only', action='store_true',
@@ -132,13 +146,32 @@ def ensure_regular_output_dir(single_fcst_mode):
 
 def apply_default_processing_mode(args):
     '''Default to full dataset processing when no explicit mode is selected.'''
-    if not (args.fcst or args.ana or args.clim or args.process or args.stats or
+    if not (args.pipeline or args.fcst or args.ana or args.clim or args.process or args.stats or
         args.merge_collections or args.merge_forecast_chunks or args.clean):
         args.process = True
 
 
 def validate_runtime_args(args, single_fcst_mode):
     '''Validate regular processing, statistics, and merge argument combinations.'''
+    if args.pipeline:
+        if args.stats:
+            print('[ERROR] --pipeline cannot be combined with --stats. '
+                  'Use --stats_types for pipeline branch selection.')
+            sys.exit(1)
+        if (args.fcst or args.ana or args.clim or args.check_only or
+            args.target_coll or args.init_start_idx is not None or
+            args.init_end_idx is not None or args.chunk is not None or
+            args.date_start_idx is not None or args.date_end_idx is not None):
+            print('[ERROR] --pipeline cannot be combined with dataset or '
+                  'chunk-specific flags')
+            sys.exit(1)
+        if args.merge_collections or args.merge_forecast_chunks or args.clean:
+            print('[ERROR] --pipeline cannot be combined with merge-only flags')
+            sys.exit(1)
+        if not args.info_dir and not single_fcst_mode:
+            print('[ERROR] --info_dir is required when using --pipeline')
+            sys.exit(1)
+
     if not args.info_dir and not single_fcst_mode and (
             args.check_only or args.init_start_idx is not None or
             args.init_end_idx is not None or args.clean or args.target_coll or
@@ -225,6 +258,162 @@ def run_merge_command(args):
     return False
 
 
+def print_runtime_contract(runtime_settings):
+    '''Print the resolved step-1 runtime contract settings.'''
+    print('\nResolved pipeline runtime contract:')
+    print(f'  stats_types={runtime_settings.stats_types}')
+    print(f'  fail_policy={runtime_settings.pipeline_fail_policy}')
+    print(f'  branch_execution={runtime_settings.pipeline_branch_execution}')
+    print(f'  resume_mode={runtime_settings.pipeline_resume_mode}')
+    print(f'  summary_file={runtime_settings.pipeline_summary_file}')
+
+
+def run_stats_branch(stats_kind, processor_config, dataset_files, init_dates,
+                     leads, info_dir):
+    '''Run one statistics branch and return status/error.'''
+    try:
+        stats_processor = StatisticsProcessor(
+            processor_config, dataset_files=dataset_files,
+            init_dates=init_dates, leads=leads)
+        if stats_kind == 'regional':
+            stats_processor.run_regional_statistics(
+                info_dir=info_dir, using_chunks=False, chunk_number=None,
+                skip_avg=False)
+        elif stats_kind == 'global':
+            stats_processor.run_global_statistics(
+                info_dir=info_dir, using_chunks=False, chunk_number=None,
+                skip_avg=False)
+        else:
+            raise ValueError(f'Unsupported stats branch: {stats_kind}')
+        return {'status': 'SUCCESS', 'error': ''}
+    except Exception as exc:
+        traceback.print_exc()
+        return {'status': 'FAILURE', 'error': str(exc)}
+
+
+def write_pipeline_summary(info_dir, runtime_settings, branch_results,
+                           final_status):
+    '''Write run summary file for pipeline mode.'''
+    if not info_dir:
+        return
+    summary_dir = os.path.join('outputs', info_dir)
+    os.makedirs(summary_dir, exist_ok=True)
+    summary_path = os.path.join(summary_dir,
+                                runtime_settings.pipeline_summary_file)
+    with open(summary_path, 'w', encoding='utf-8') as f:
+        f.write('v4 pipeline summary\n')
+        f.write(f'final_status: {final_status}\n')
+        f.write(f'stats_types: {runtime_settings.stats_types}\n')
+        f.write(f'pipeline_fail_policy: '
+                f'{runtime_settings.pipeline_fail_policy}\n')
+        f.write(f'pipeline_branch_execution: '
+                f'{runtime_settings.pipeline_branch_execution}\n')
+        f.write(f'pipeline_resume_mode: '
+                f'{runtime_settings.pipeline_resume_mode}\n')
+        for branch_name, branch_result in branch_results.items():
+            f.write(f'{branch_name}_status: {branch_result["status"]}\n')
+            if branch_result['error']:
+                f.write(f'{branch_name}_error: {branch_result["error"]}\n')
+    print(f'[INFO] Pipeline summary written: {summary_path}')
+
+
+def run_pipeline_mode(args, single_fcst_mode):
+    '''Run end-to-end pipeline orchestration using one controller path.'''
+    print('\n==================================================')
+    print('V4 SINGLE-JOB PIPELINE')
+    print('==================================================')
+    print('[INFO] Stage 1/4: Preflight')
+
+    processor = BatchDatasetProcessor.from_yaml(args.config, single_fcst_mode)
+    runtime_settings = resolve_runtime_settings(args, processor.config)
+    print_runtime_contract(runtime_settings)
+    if runtime_settings.pipeline_resume_mode == 'safe':
+        print('[INFO] Resume mode is safe (full checkpointing pending later step)')
+
+    print('[INFO] Stage 2/4: Source dataset build')
+    results = processor.process_batch(
+        target_coll=None, info_dir=args.info_dir, date_start_idx=None,
+        date_end_idx=None, check_only=False, skip_calc_mode=False,
+        single_fcst_mode=single_fcst_mode)
+
+    if results.get('status') != 'success':
+        reason = results.get('reason', 'Unknown error')
+        print(f'[ERROR] Dataset creation failed in pipeline mode: {reason}')
+        return 1
+
+    processor.save_processed_datasets(
+        results,
+        info_dir=args.info_dir,
+        date_start_idx=None,
+        date_end_idx=None,
+        target_coll=None,
+        single_fcst_mode=bool(single_fcst_mode),
+        skip_calc_mode=False,
+    )
+
+    dataset_files = results.get('dataset_files', {})
+    init_dates = results.get('init_dates', [])
+    leads = results.get('leads', [])
+
+    required_datasets = {'fcst', 'ana', 'clim'}
+    missing_datasets = required_datasets - set(dataset_files.keys())
+    if missing_datasets:
+        print(f'[ERROR] Missing datasets for stats: '
+              f'{", ".join(sorted(missing_datasets))}')
+        return 1
+    if not init_dates or not leads:
+        print('[ERROR] Missing init dates or lead times for statistics')
+        return 1
+
+    print('[INFO] Stage 3/4: Statistics branches')
+    requested_branches = []
+    if runtime_settings.stats_types in ['regional', 'both']:
+        requested_branches.append('regional')
+    if runtime_settings.stats_types in ['global', 'both']:
+        requested_branches.append('global')
+
+    if (runtime_settings.pipeline_branch_execution == 'parallel' and
+        len(requested_branches) > 1):
+        print('[INFO] Branch execution=parallel configured; running sequentially '
+              'for now in step 2/3 orchestration.')
+
+    branch_results = {}
+    for branch in requested_branches:
+        print(f'[INFO] Running {branch} statistics branch...')
+        branch_results[branch] = run_stats_branch(
+            branch, processor.config, dataset_files, init_dates, leads,
+            args.info_dir)
+        if (branch_results[branch]['status'] != 'SUCCESS' and
+            runtime_settings.pipeline_fail_policy == 'fail_fast'):
+            print('[ERROR] fail_fast policy triggered')
+            write_pipeline_summary(args.info_dir, runtime_settings,
+                                   branch_results, 'FAILURE')
+            return 1
+
+    success_count = sum(1 for r in branch_results.values()
+                        if r['status'] == 'SUCCESS')
+    if success_count == len(requested_branches):
+        final_status = 'SUCCESS'
+        exit_code = 0
+    elif success_count == 0:
+        final_status = 'FAILURE'
+        exit_code = 1
+    else:
+        final_status = 'PARTIAL_FAILURE'
+        exit_code = 1
+
+    print('[INFO] Stage 4/4: Finalize')
+    write_pipeline_summary(args.info_dir, runtime_settings, branch_results,
+                           final_status)
+    if final_status == 'SUCCESS':
+        print('\n[SUCCESS] Pipeline completed successfully')
+    elif final_status == 'PARTIAL_FAILURE':
+        print('\n[ERROR] Pipeline finished with partial failure')
+    else:
+        print('\n[ERROR] Pipeline failed')
+    return exit_code
+
+
 def main():
     '''Main function'''
 
@@ -236,6 +425,10 @@ def main():
     skip_calc_mode = bool(args.target_coll)
 
     try:
+        if args.pipeline:
+            exit_code = run_pipeline_mode(args, single_fcst_mode)
+            sys.exit(exit_code)
+
         if run_merge_command(args):
             return
 
@@ -290,131 +483,15 @@ def main():
             init_dates = results.get('init_dates', [])
             leads = results.get('leads', [])
 
-            # Save new datasets if they were created
-            if single_fcst_mode:
-                # Apply scaling for in-memory datasets
-                datasets = results['datasets']
-                for ds_nm, ds in datasets.items():
-                    for var in ds.data_vars:
-                        if var != 'grid_weights':
-                            var_upper = var.upper()
-                            if var_upper in VARS_SCALE_MAP:
-                                scale_factor = VARS_SCALE_MAP[var_upper]
-                                if scale_factor != 1.0:
-                                    ds[var] = ds[var] * scale_factor
-                print('\n[INFO] Single-forecast mode: Keeping datasets in '
-                      'memory (not saving to disk)')
-            elif 'datasets' in results:
-                print('\n--- Saving datasets ---')
-                datasets = results['datasets']
-                existing_datasets = results.get('existing_datasets', {})
-                saved_count = 0
-                for ds_nm, ds in datasets.items():
-                    if ds_nm not in existing_datasets:
-                        # Chunk filename (save in tmp)
-                        if (args.date_start_idx is not None or
-                            args.date_end_idx is not None):
-                            chunk_id = (f'chunk_{args.date_start_idx:03d}_'
-                                        f'{args.date_end_idx:03d}')
-                            filenm = os.path.join(
-                                f'outputs/{args.info_dir}/tmp',
-                                processor._generate_output_filenm(
-                                    ds_nm, chunk_id=chunk_id,
-                                    info_dir=args.info_dir))
-                        # Collection-specific filename (save in tmp)
-                        elif args.target_coll:
-                            filenm = os.path.join(
-                                f'outputs/{args.info_dir}/tmp',
-                                processor._generate_output_filenm(
-                                    ds_nm, target_coll=args.target_coll,
-                                    info_dir=args.info_dir))
-                        # Regular filename
-                        else:
-                            filenm = os.path.join(
-                                'outputs',
-                                processor._generate_output_filenm(ds_nm))
-
-                        # Define coordinates and dimensions to keep
-                        if ds_nm == 'fcst':
-                            cds_to_keep = ['init_date', 'lead', 'lev', 'lat',
-                                           'lon']
-                        elif ds_nm == 'ana':
-                            cds_to_keep = ['time', 'lev', 'lat', 'lon']
-                        elif ds_nm == 'clim':
-                            cds_to_keep = ['time', 'lev', 'lat', 'lon']
-
-                        # Create clean dataset with only required dims/coords
-                        data_vars = {}
-                        for var in ds.data_vars:
-                            if var != 'grid_weights':
-                                var_data = ds[var]
-                                dims_to_drop = [dim for dim in var_data.dims
-                                                if dim not in cds_to_keep]
-                                for dim in dims_to_drop:
-                                    if dim in var_data.dims:
-                                        var_data = var_data.isel({dim: 0},
-                                                                 drop=True)
-                                var_data = var_data.astype('float32')
-                                # Apply scaling and metadata
-                                # Skip in collection-specific mode
-                                if not skip_calc_mode:
-                                    var_upper = var.upper()
-                                    if var_upper in VARS_SCALE_MAP:
-                                        scale_factor = (
-                                            VARS_SCALE_MAP[var_upper])
-                                        if scale_factor != 1.0:
-                                            var_data = var_data * scale_factor
-                                    if var_upper in VARS_LONG_MAP:
-                                        var_data.attrs['long_name'] = (
-                                            VARS_LONG_MAP[var_upper])
-                                    if var_upper in VARS_UNIT_MAP:
-                                        var_data.attrs['units'] = (
-                                            VARS_UNIT_MAP[var_upper])
-                                data_vars[var] = var_data
-                        clean_coords = {coord: ds.coords[coord] for coord
-                                        in cds_to_keep if coord in ds.coords}
-                        ds_clean = xr.Dataset(data_vars, coords=clean_coords)
-                        unwanted_dims = [dim for dim in ds_clean.dims
-                                         if dim not in cds_to_keep]
-                        if unwanted_dims:
-                            ds_clean = ds_clean.drop_dims(unwanted_dims)
-
-                        # Add grid weights back and save with compression
-                        ds_clean['grid_weights'] = ds['grid_weights']
-                        encoding = {}
-                        for var in ds_clean.variables:
-                            encoding[var] = {'zlib': True, 'complevel': 2}
-                            dtype_nm = str(ds_clean[var].dtype)
-                            if 'float64' in dtype_nm:
-                                encoding[var]['dtype'] = 'float32'
-                        # Add exclusion metadata for forecast datasets
-                        if ds_nm == 'fcst':
-                            BatchDatasetProcessor._add_exclusion_metadata(
-                                ds_clean, processor.config)
-
-                        # Make 'init_date' unlimited if fcst chunk
-                        if (args.date_start_idx is not None and
-                            ds_nm == 'fcst'):
-                            ds_clean.to_netcdf(
-                                filenm, unlimited_dims=['init_date'],
-                                encoding=encoding)
-                        else:
-                            ds_clean.to_netcdf(filenm, encoding=encoding)
-
-                # Print summary
-                        final_dims = dict(ds_clean.sizes)
-                        print(f'  [OK] Saved: {filenm}')
-                        print(f'    Variables: {list(ds.data_vars.keys())}')
-                        print(f'    Dimensions: {final_dims}')
-                        saved_count += 1
-                    else:
-                        print(f'  [INFO] Using existing: '
-                              f'{os.path.basename(existing_datasets[ds_nm])}')
-                if saved_count > 0:
-                    print(f'\n[SUCCESS] Saved {saved_count} new datasets!')
-                if existing_datasets:
-                    print(f'[INFO] Used {len(existing_datasets)} existing '
-                          f'datasets')
+            processor.save_processed_datasets(
+                results,
+                info_dir=args.info_dir,
+                date_start_idx=args.date_start_idx,
+                date_end_idx=args.date_end_idx,
+                target_coll=args.target_coll,
+                single_fcst_mode=bool(single_fcst_mode),
+                skip_calc_mode=skip_calc_mode,
+            )
 
         # Phase 2: Statistics Calculation
         if args.stats or args.date: # also run in single-fcst mode

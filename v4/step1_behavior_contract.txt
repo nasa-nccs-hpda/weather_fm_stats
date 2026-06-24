@@ -1,0 +1,118 @@
+Step 1 Plan and Suggested Configuration
+v4 Single-Job Pipeline Behavior Contract
+
+Purpose
+- Define exactly how the v4 pipeline should behave before deeper refactors.
+- Remove ambiguity around stage order, success/failure handling, and stats branch behavior.
+
+Scope of Step 1
+- Lock execution order and branching rules.
+- Lock failure policy for independent regional/global branches.
+- Lock high-level resume expectations (without implementing full resume yet).
+- Define runtime configuration keys and defaults for this behavior.
+
+1) Canonical Pipeline Order
+1. Preflight
+- Validate config file and required keys.
+- Resolve runtime settings (CLI overrides YAML; YAML overrides defaults).
+- Create run context and output directories.
+
+2. Source Dataset Build
+- Build or reuse source datasets: fcst, ana, clim.
+- Source datasets are shared inputs for both stats branches.
+
+3. Source Merge Barrier
+- Perform required chunk/collection merges.
+- Do not start stats until source merges are complete and validated.
+
+4. Stats Branches
+- Regional stats branch and global stats branch are independent.
+- Both consume the same built source datasets.
+
+5. Finalize
+- Emit run summary with per-stage/per-branch status.
+- Preserve artifacts needed for debugging if any branch failed.
+
+2) Stats Branch Rules
+- stats_types=regional: run regional only.
+- stats_types=global: run global only.
+- stats_types=both: run both branches from the same source datasets.
+- Regional/global outputs must remain separate files.
+- Branches can run in parallel if resources allow; otherwise sequential is valid.
+
+3) Failure Policy (Contract)
+- Preflight failure: whole run fails immediately.
+- Source build/merge failure: whole run fails (stats cannot proceed).
+- Branch failure when stats_types=both:
+  - If regional fails and global succeeds, run exits with PARTIAL_FAILURE.
+  - If global fails and regional succeeds, run exits with PARTIAL_FAILURE.
+  - If both fail, run exits with FAILURE.
+  - If both succeed, run exits with SUCCESS.
+- Branch failure when only one branch requested: run exits with FAILURE.
+
+4) Stage Completion Criteria (Step-1 definitions)
+- Preflight complete: config validated and runtime settings resolved.
+- Source build complete: fcst/ana/clim required inputs exist and pass validation.
+- Source merge complete: merged source artifacts exist and pass validation.
+- Branch complete: branch output file exists and passes basic integrity checks.
+- Finalize complete: summary written with statuses and timing.
+
+5) Resume Expectations (High-level for now)
+- If run is restarted with same run context, already-complete stages may be skipped.
+- Skipping is allowed only when completion criteria are met.
+- Failed/incomplete stages are rerun.
+- Full checkpoint implementation is part of later steps.
+
+6) Suggested Runtime Configuration Keys
+Use these keys (YAML) to support step-1 behavior decisions now:
+
+- pipeline_mode: "single_job"
+  - Allowed: single_job
+  - Default: single_job
+
+- stats_types: "both"
+  - Allowed: regional, global, both
+  - Default: both
+
+- pipeline_fail_policy: "partial_ok"
+  - Allowed: fail_fast, partial_ok
+  - Meaning:
+    - fail_fast: first branch failure ends run.
+    - partial_ok: allow independent branch completion and report partial.
+  - Recommended default: partial_ok
+
+- pipeline_branch_execution: "parallel"
+  - Allowed: parallel, sequential
+  - Recommended default: parallel (fallback to sequential when constrained)
+
+- pipeline_resume_mode: "safe"
+  - Allowed: off, safe
+  - Meaning:
+    - off: always rerun all stages.
+    - safe: skip only stages that satisfy completion criteria.
+  - Recommended default: safe
+
+- pipeline_summary_file: "run_summary.txt"
+  - Output summary filename in run directory.
+
+7) Suggested CLI Behavior
+- Existing flags remain valid for debugging.
+- Add/standardize one orchestrator invocation path for full pipeline.
+- CLI should print resolved behavior contract at startup:
+  - stats_types
+  - fail_policy
+  - branch_execution
+  - resume_mode
+
+8) Acceptance Checklist for Step 1
+- A single written behavior contract exists and is reviewed.
+- Team agrees source datasets are shared across reg/glo branches.
+- Team agrees on partial failure semantics for stats_types=both.
+- Team agrees on defaults for fail policy and branch execution.
+- Runtime configuration keys are documented and mapped to defaults.
+- CLI startup output includes resolved contract values.
+
+Notes
+- This step does not require major algorithm changes.
+- This step is about decisions, explicit contracts, and interfaces.
+- Implementation for parallelism and full resume is in later steps.

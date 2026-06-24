@@ -1,0 +1,50 @@
+1. Lock down expected behavior first (Estimated LOC: 20-60) [Completed]
+  - Confirm pipeline order: build source datasets once, then run regional and global stats as separate branches.
+  - Confirm failure policy: if regional fails, global can still run (and vice versa), with clear error reporting.
+
+2. Create one Python orchestrator flow (Estimated LOC: 120-260) [Completed]
+  - Add one main path in v4 that runs the full workflow end-to-end inside one SLURM job.
+  - Keep existing single-purpose flags for debugging and manual reruns.
+
+3. Centralize runtime settings (Estimated LOC: 60-140) [Completed]
+  - Put worker counts, chunk sizes, and resume behavior in one place (YAML + CLI overrides).
+  - Keep defaults safe for your node size.
+
+4. Parallelize source dataset creation in Python (Estimated LOC: 180-420)
+  - Move heavy parallel work from SLURM job arrays into local worker processes.
+  - Start with forecast chunk processing (biggest win), then collection-level parallel work.
+  - Add clear wait points before merge stages.
+
+5. Make merges safe and deterministic (Estimated LOC: 80-180)
+  - Merge only after all required chunk tasks finish.
+  - Validate merged outputs before deleting chunk and temp files.
+  - Keep naming consistent and predictable.
+
+6. Split regional and global stats into independent branches (Estimated LOC: 120-260)
+  - Use the same built source datasets (fcst, ana, clim) as inputs.
+  - Run regional and global stats separately (parallel if resources allow).
+  - Write separate output files and separate status logs.
+
+7. Add restart and resume support (Estimated LOC: 160-360)
+  - Track stage and chunk completion.
+  - On rerun, skip completed good outputs and continue from the first incomplete point.
+  - Avoid redoing expensive steps unless required.
+
+8. Improve logs and run summary (Estimated LOC: 80-180)
+  - Add simple, readable stage and chunk progress messages.
+  - Include timing summaries and counts of completed, skipped, and failed chunks.
+  - End with a concise final summary.
+
+9. Make worker counts resource-aware (Estimated LOC: 40-100)
+  - Read SLURM_CPUS_PER_TASK and combine with configured limits.
+  - Cap workers conservatively to avoid memory blowups.
+
+10. Validate old vs new behavior with a small test (Estimated LOC: 100-240)
+  - Use a small date range.
+  - Run old flow and new flow separately.
+  - Compare file presence, shapes and dimensions, and key stat values.
+  - Goal: prove the refactor changed compute strategy, not scientific results.
+
+11. Remove old multi-job assumptions (Estimated LOC: 80-220)
+  - Delete or isolate legacy code that expects SLURM dependency chains.
+  - Update docs and help text so single job plus in-process parallelism is the official model.
