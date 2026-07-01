@@ -1,0 +1,221 @@
+# Weather Modeling Stats Pipeline - Bug Fix and Refactor Notes
+
+## Context
+This is a scientific weather modeling codebase that was refactored from multiple parallel SLURM jobs (one per dataset type) to a single orchestrator job using distributed processing to chunk datasets by initial date.
+
+The pipeline has 4 stages:
+1. **Stage 1**: Preflight/config validation
+2. **Stage 2**: Source dataset build (parallel, handled by `dataset_parallel_executor.py`)
+3. **Stage 3**: Statistics branches (regional/global)
+4. **Stage 4**: Finalize/summary
+
+## Bug Fixed: Missing Forecast File Path
+
+### The Problem
+When the forecast dataset already existed and was validated, Stage 2 returned:
+```python
+{'fcst': None, 'ana': '/path/to/ana.nc4', 'clim': '/path/to/clim.nc4'}
+```
+
+This caused Stage 3 (statistics) to crash with:
+```
+TypeError: stat: path should be string, bytes, os.PathLike or integer, not NoneType
+```
+
+### Root Cause
+In `model/dataset_parallel_executor.py`, the `run_parallel_source_dataset_build()` function handles forecast specially because it supports parallel chunking:
+
+1. Forecast is checked first with `_forecast_needs_processing()`
+2. If not needed, code falls into `elif process_fcst:` block (line ~139)
+3. Then `followup_processor` is created with `fcst_model = ''` to process only ana/clim
+4. At the end, forecast path was only added if `built_fcst_this_run == True`
+5. **Missing logic**: No code to capture the existing forecast file path when it was skipped
+
+### The Fix
+Added logic to capture the existing forecast path when it's skipped (lines 139-145 in `dataset_parallel_executor.py`):
+
+```python
+elif process_fcst:
+    print('[INFO] Forecast dataset already valid; skipping forecast '
+          'chunk processing')
+    # Get the existing forecast path
+    temp_processor = BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode)
+    temp_processor.ana_model = ''
+    temp_processor.clim_model = ''
+    existing_datasets_check = temp_processor._check_for_existing_datasets()
+    existing_fcst_path = existing_datasets_check.get('fcst')
+```
+
+Also initialized `existing_fcst_path = None` at the top of the function (line ~113):
+```python
+chunk_results = []
+built_fcst_this_run = False
+existing_fcst_path = None  # Added this
+```
+
+And used it when assembling final results (line ~171):
+```python
+dataset_files = dict(followup_results.get('dataset_files', {}))
+if built_fcst_this_run:
+    dataset_files['fcst'] = os.path.join(
+        'outputs', base_processor._generate_output_filenm('fcst'))
+elif existing_fcst_path:  # Use the path we captured earlier
+    dataset_files['fcst'] = existing_fcst_path
+```
+
+### Why Forecast Gets Special Treatment
+**Forecast is chunked for performance:**
+- ~31 init_dates × 15 leads = 465 time points
+- Can be split into chunks (e.g., 2 dates per chunk) and processed in parallel
+- Each chunk creates a file, then they're merged
+
+**Ana/Clim are NOT chunked:**
+- Small enough to process as single batches
+- Processed together after forecast in the "followup" step
+
+## Suggested Refactor: Cleaner Architecture
+
+### Current Problems
+1. **Mixed concerns**: Parallel executor knows too much about dataset types
+2. **Implicit state**: Using `model_name = ''` to disable datasets is fragile
+3. **Scattered logic**: File path tracking happens in multiple places
+4. **Special-casing**: Forecast has unique code paths that break abstraction
+5. **Hard to test**: Tightly coupled components
+
+### Proposed Modular Design
+
+#### 1. DatasetBuilder - Single responsibility: build one dataset
+```python
+# dataset_builder.py
+class DatasetBuilder:
+    def build(self, dataset_type, config, options):
+        """Build any dataset type with consistent interface.
+        
+        Returns: DatasetResult(path, metadata)
+        """
+        pass
+        
+    def needs_building(self, dataset_type, config):
+        """Check if dataset needs to be built.
+        
+        Returns: (needs_build: bool, existing_path: str|None)
+        """
+        pass
+```
+
+#### 2. ChunkStrategy - Single responsibility: chunking logic
+```python
+# chunk_strategy.py
+class ChunkStrategy:
+    def can_chunk(self, dataset_type):
+        """Whether this dataset type supports chunking.
+        
+        Returns: bool (True only for 'fcst')
+        """
+        pass
+        
+    def create_chunks(self, dataset_type, config):
+        """Create chunk specs for parallel processing.
+        
+        Returns: List[ChunkSpec(start_idx, end_idx)]
+        """
+        pass
+        
+    def merge_chunks(self, chunk_paths, output_path):
+        """Merge completed chunks into final dataset.
+        
+        Returns: bool (success)
+        """
+        pass
+```
+
+#### 3. DatasetCoordinator - Single responsibility: coordinate builds
+```python
+# dataset_coordinator.py
+class DatasetCoordinator:
+    def __init__(self, builder, chunk_strategy):
+        self.builder = builder
+        self.chunker = chunk_strategy
+        
+    def build_dataset(self, dataset_type, config, parallel=False):
+        """Unified build method for any dataset type.
+        
+        Handles checking cache, parallel vs sequential, chunking, merging.
+        Always returns same interface regardless of path taken.
+        """
+        needs_build, existing_path = self.builder.needs_building(
+            dataset_type, config)
+        
+        if not needs_build:
+            return DatasetResult(path=existing_path, was_cached=True)
+            
+        if parallel and self.chunker.can_chunk(dataset_type):
+            return self._build_parallel(dataset_type, config)
+        else:
+            return self._build_sequential(dataset_type, config)
+    
+    def _build_parallel(self, dataset_type, config):
+        """Handle chunked parallel build."""
+        chunks = self.chunker.create_chunks(dataset_type, config)
+        chunk_results = self._execute_chunks_parallel(chunks)
+        merged_path = self.chunker.merge_chunks(chunk_results, output_path)
+        return DatasetResult(path=merged_path, was_cached=False)
+    
+    def _build_sequential(self, dataset_type, config):
+        """Handle standard sequential build."""
+        result = self.builder.build(dataset_type, config, options={})
+        return result
+```
+
+#### 4. Usage in Pipeline (Clean!)
+```python
+# In run_parallel_source_dataset_build()
+def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings):
+    coordinator = DatasetCoordinator(
+        builder=DatasetBuilder(),
+        chunk_strategy=ChunkStrategy()
+    )
+    
+    results = {}
+    for dataset_type in ['fcst', 'ana', 'clim']:
+        result = coordinator.build_dataset(
+            dataset_type, 
+            config_path,
+            parallel=runtime_settings.enable_parallel
+        )
+        results[dataset_type] = result.path  # Always has a path!
+    
+    return {
+        'status': 'success', 
+        'dataset_files': results,
+        'init_dates': ...,
+        'leads': ...
+    }
+```
+
+### Key Improvements
+1. **No special cases**: All datasets use the same code path
+2. **Explicit state**: Return proper objects (DatasetResult), not dicts with optional keys
+3. **Testable**: Each class has one job and can be tested independently
+4. **Clear flow**: Read the code top-to-bottom, no jumping around
+5. **Easy to extend**: Want to make ana/clim chunkable? Just update ChunkStrategy
+6. **Type safe**: Can add type hints easily with this structure
+
+### Migration Path
+1. Create new classes alongside existing code
+2. Test in parallel with old implementation
+3. Switch pipeline to use new coordinator
+4. Remove old implementation once validated
+
+### Why This Fixes The Bug Pattern
+The bug happened because forecast had special implicit state handling that broke when cached. With this design:
+- `build_dataset()` **always** returns a `DatasetResult` with a path
+- No implicit state (`model_name = ''` tricks)
+- Cache checking is explicit and consistent across all dataset types
+- No way to "forget" to handle the cached case
+
+## Files Involved
+- `model/dataset_parallel_executor.py` - Where the bug was fixed
+- `model/dataset_processor.py` - Core dataset processing logic (~2000 lines)
+- `controller/cli_controller.py` - Main entry point and pipeline orchestration
+- `model/statistics_processor.py` - Stage 3, crashed due to None path
