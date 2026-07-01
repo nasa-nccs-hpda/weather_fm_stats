@@ -1,0 +1,372 @@
+================================================================================
+BARE-BONES REFACTORING PLAN - 4-6 WEEKS
+================================================================================
+
+PHILOSOPHY: Fix what hurts most, prevent bugs, enable future work
+
+
+WEEKS 1-2: ERROR HANDLING + VARIABLE REGISTRY
+==============================================
+
+Why These First:
+- Error handling: Easier debugging (saves time immediately)
+- Variable registry: You'll need to add variables/models (prevents future pain)
+- Both are LOW EFFORT, HIGH VALUE
+- Both are ISOLATED (won't break existing code)
+
+Week 1: Error Handling
+-----------------------
+Day 1-2: Create exceptions.py
+    class WeatherStatsError(Exception): pass
+    class DatasetValidationError(WeatherStatsError): pass
+    class ChunkProcessingError(WeatherStatsError): pass
+    class StatisticsError(WeatherStatsError): pass
+    # Just the most common ones
+
+Day 3-4: Update dataset_processor.py and dataset_parallel_executor.py
+    Replace: raise ValueError(...) 
+    With:    raise DatasetValidationError(...)
+    
+    Replace: return {'status': 'failed', ...}
+    With:    raise ChunkProcessingError(...)
+
+Day 5: Update cli_controller.py to catch and format
+    try:
+        # existing code
+    except DatasetValidationError as e:
+        print(f'[ERROR] Validation: {e}')
+        sys.exit(2)
+    except ChunkProcessingError as e:
+        print(f'[ERROR] Chunk: {e}')
+        sys.exit(3)
+
+SKIP: Extensive testing (just verify pipeline still runs)
+
+Week 2: Variable Registry
+--------------------------
+Day 1-2: Create variable_registry.py
+    Copy constants from constants.py
+    Wrap in VariableRegistry class
+    Add simple methods:
+        get_scale_factor(var)
+        get_units(var)
+        is_calculable(var)
+        calculate(var, deps)
+
+Day 3-4: Update dataset_processor.py
+    registry = VariableRegistry()
+    Replace: VARS_SCALE_MAP[var]
+    With:    registry.get_scale_factor(var)
+    
+    Replace: if calc_var == 'D2m': <hardcoded logic>
+    With:    registry.calculate('D2m', deps)
+
+Day 5: Same for statistics_processor.py
+
+SKIP: YAML config support (use defaults only)
+SKIP: Validation logic (add later if needed)
+SKIP: Extensive tests (just verify calculations work)
+
+DELIVERABLE: Clearer errors + centralized variable logic
+
+
+WEEKS 3-4: PREVENT BUG PATTERN + EXTRACT HELPERS
+=================================================
+
+Why These:
+- Fix the root cause of the bug we found
+- Extract small utilities from god classes
+- Won't break existing code
+- Makes future work easier
+
+Week 3: Fix Parallel Executor Pattern
+--------------------------------------
+Goal: Prevent "missing file path" bugs
+
+Day 1-2: Create simple DatasetResult class
+    class DatasetResult:
+        def __init__(self, path, was_cached, dataset_type):
+            self.path = path  # Always set!
+            self.was_cached = was_cached
+            self.dataset_type = dataset_type
+
+Day 3-4: Update dataset_parallel_executor.py
+    Make sure EVERY code path returns DatasetResult with path set
+    
+    def _check_existing(dataset_type):
+        existing = find_existing_file(dataset_type)
+        if existing:
+            return DatasetResult(path=existing, was_cached=True, 
+                               dataset_type=dataset_type)
+        return None
+    
+    def _build_dataset(dataset_type):
+        path = do_build()
+        return DatasetResult(path=path, was_cached=False,
+                           dataset_type=dataset_type)
+
+Day 5: Update coordinator to use DatasetResult
+    result = build_dataset('fcst')
+    dataset_files['fcst'] = result.path  # Always has path!
+
+SKIP: Full coordinator pattern refactor
+SKIP: Dependency injection
+SKIP: Extensive tests (just verify no None paths)
+
+Week 4: Extract 2-3 Helper Classes
+-----------------------------------
+Goal: Pull small, independent utilities out of god classes
+
+Pick the EASIEST extractions that give immediate value:
+
+Option A - GridManager (Easy, well-isolated):
+    Day 1: Create grid_manager.py
+    Day 2: Copy grid methods from dataset_processor
+    Day 3: Update dataset_processor to use GridManager
+    Day 4: Same for statistics_processor
+    Day 5: Quick smoke tests
+
+Option B - FileResolver (Easy, well-isolated):
+    Day 1: Create file_resolver.py
+    Day 2: Copy template resolution methods
+    Day 3: Update dataset_processor to use FileResolver
+    Day 4: Handle edge cases
+    Day 5: Quick smoke tests
+
+Option C - VariableMapper (Medium effort):
+    Day 1-2: Create variable_mapper.py with normalization logic
+    Day 3-4: Update both god classes to use it
+    Day 5: Quick smoke tests
+
+PICK 2 OF THE 3 based on which seems easiest when you start.
+
+SKIP: Extracting everything
+SKIP: Complex extractions (DatasetCombiner, etc.)
+SKIP: Extensive tests (just verify it works)
+
+DELIVERABLE: 2-3 reusable utility classes
+
+
+WEEK 5: EXTRACT TESTABLE PIPELINE FUNCTION
+===========================================
+
+Why This:
+- Enables unit testing without CLI overhead
+- Low effort, high value for future work
+- Doesn't require refactoring god classes
+
+Day 1: Create pipeline_runner.py with single function
+    def run_pipeline(config_path, info_dir, stats_types, ...):
+        """All the business logic from main()"""
+        processor = BatchDatasetProcessor.from_yaml(config_path)
+        # ... rest of current main() logic
+        return {'status': 'success', 'dataset_files': ...}
+
+Day 2: Update cli_controller.py to call it
+    def main():
+        args = parse_arguments()
+        try:
+            result = run_pipeline(args.config, args.info_dir, ...)
+            print('[SUCCESS]')
+        except WeatherStatsError as e:
+            print(f'[ERROR] {e}')
+
+Day 3-4: Write a few critical tests
+    def test_pipeline_with_existing_datasets():
+        result = run_pipeline('test_config.yaml', ...)
+        assert result['status'] == 'success'
+        assert 'fcst' in result['dataset_files']
+        assert result['dataset_files']['fcst'] is not None
+
+Day 5: Document the function
+
+SKIP: Extracting multiple functions
+SKIP: Full orchestrator class
+SKIP: Comprehensive test suite
+
+DELIVERABLE: Testable pipeline entry point
+
+
+WEEK 6: DOCUMENTATION + CLEANUP
+================================
+
+Why This:
+- Future you will thank you
+- Helps others understand the code
+- Catches issues you missed
+
+Day 1-2: Document the god classes
+    Add docstrings explaining what each major method does
+    Add comments for complex logic
+    Document the new helper classes
+    
+    Focus on:
+    - What each class is responsible for
+    - What the major methods do
+    - Any non-obvious behavior
+
+Day 3: Create architecture overview
+    Simple markdown doc explaining:
+    - Main components (god classes + helpers)
+    - Data flow (files → datasets → statistics)
+    - Where to find things
+    - Known issues/future work
+
+Day 4: Add type hints to new code
+    Just the new files (exceptions, registry, helpers, runner)
+    Don't touch god classes (too time consuming)
+
+Day 5: Quick cleanup pass
+    Remove dead code
+    Fix obvious issues
+    Run linter on new files
+
+SKIP: Comprehensive documentation
+SKIP: Type hints everywhere
+SKIP: Full code review
+
+DELIVERABLE: Documented codebase
+
+
+TESTING STRATEGY (MINIMAL)
+===========================
+
+Given time constraints, focus on:
+
+1. Smoke Tests (Run After Each Change)
+   - Does the pipeline still run end-to-end?
+   - Do test datasets process correctly?
+   - Are error messages clear?
+
+2. Critical Path Tests (Week 5)
+   - Test run_pipeline() with existing datasets
+   - Test run_pipeline() with missing files
+   - Test statistics calculation
+   - 5-10 tests total
+
+3. Manual Testing
+   - Run on real data periodically
+   - Check outputs look correct
+   - Verify error handling works
+
+SKIP: Unit tests for everything
+SKIP: Integration tests for all paths
+SKIP: Performance testing
+SKIP: Edge case coverage
+
+
+WHAT TO SKIP (SAVE FOR LATER)
+==============================
+
+Do NOT attempt in 6 weeks:
+- Full god class refactoring
+- Comprehensive test suite
+- Dependency injection everywhere
+- Interface definitions
+- Abstraction layer cleanup
+- Major architectural changes
+
+
+RISK MITIGATION (LOW BUDGET)
+=============================
+
+Since testing is limited:
+
+1. Work on feature branch
+   - Easy to roll back
+   - Can test in isolation
+
+2. Make small commits
+   - Each commit compiles and runs
+   - Easy to bisect if bugs appear
+
+3. Test on small dataset first
+   - Catches issues quickly
+   - Less time wasted
+
+4. Keep old code commented
+   - Can uncomment if new code breaks
+   - Remove after 1 week of stability
+
+
+WEEK-BY-WEEK SUMMARY
+====================
+
+Week 1: Error Handling
+  Output: Consistent exceptions, clearer error messages
+
+Week 2: Variable Registry  
+  Output: Centralized variable logic, easier to extend
+
+Week 3: Fix Parallel Executor
+  Output: Prevent "None path" bugs, DatasetResult class
+
+Week 4: Extract 2 Helper Classes
+  Output: GridManager + FileResolver (or VariableMapper)
+
+Week 5: Testable Pipeline Function
+  Output: pipeline_runner.py + 5-10 tests
+
+Week 6: Document + Cleanup
+  Output: Documented code, architecture overview
+
+
+EXPECTED OUTCOMES (6 WEEKS)
+============================
+
+✓ Clearer error messages (Week 1)
+✓ Easier to add variables (Week 2)
+✓ Less likely to repeat the bug we fixed (Week 3)
+✓ 2-3 reusable utility classes (Week 4)
+✓ Can write tests without CLI (Week 5)
+✓ Future developers can understand code (Week 6)
+
+✗ God classes still large (but documented)
+✗ Not comprehensive test coverage (but some tests)
+✗ Still some coupling (but less than before)
+✗ Not perfect architecture (but better than now)
+
+
+FUTURE WORK (AFTER 6 WEEKS)
+============================
+
+With this foundation, later you can:
+- Extract more helpers from god classes
+- Add comprehensive tests
+- Implement dependency injection
+- Continue refactoring incrementally
+
+But you'll have:
+- Better error handling
+- Centralized variable logic
+- A few reusable components
+- Testable entry point
+- Documentation
+
+That's a solid foundation for future work without breaking the bank.
+
+
+COST/BENEFIT ANALYSIS
+=====================
+
+Traditional Approach (12 weeks):
+  Cost: High
+  Benefit: Excellent code quality
+  Risk: Medium (lots of changes)
+
+Bare-Bones Approach (6 weeks):
+  Cost: Half
+  Benefit: Good enough (70% of value for 50% cost)
+  Risk: Low (small, isolated changes)
+
+Do Nothing:
+  Cost: Zero now
+  Benefit: None
+  Risk: High (will hit more bugs like the one we just fixed)
+
+Recommendation: Bare-bones approach is best ROI.
+
+
+================================================================================
+END - BARE-BONES 6-WEEK PLAN
+================================================================================
