@@ -365,6 +365,7 @@ def run_pipeline_mode(args, single_fcst_mode):
     if not init_dates or not leads:
         print('[ERROR] Missing init dates or lead times for statistics')
         return 1
+    print(f'[INFO] RESULTS FROM STAGE 2 (datasets): {dataset_files}')
 
     print('[INFO] Stage 3/4: Statistics branches')
     requested_branches = []

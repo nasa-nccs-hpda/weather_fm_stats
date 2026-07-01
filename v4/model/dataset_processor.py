@@ -604,7 +604,6 @@ class BatchDatasetProcessor:
 
     def _select_pressure_levels(self, ds, var_dict):
         '''Select target pressure levels for 3D variables'''
-        print(f"      [INFO]: DATASET DIMENSIONS: {ds.dims}")
         if 'level' in ds.dims:
             level_coord = 'level'
         elif 'lev' in ds.dims:
