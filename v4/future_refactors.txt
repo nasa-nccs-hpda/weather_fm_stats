@@ -1,0 +1,2426 @@
+================================================================================
+WEATHER MODELING STATS PIPELINE - CODE QUALITY ANALYSIS AND REFACTORING PLAN
+================================================================================
+
+Document Purpose: Comprehensive analysis of code quality issues and concrete
+refactoring recommendations for the weather modeling statistics pipeline.
+
+Target Audience: AI coding agents with access to the full codebase
+
+Date: 2026-07-01
+
+Codebase Context: Scientific weather modeling pipeline that processes forecast,
+analysis, and climatology datasets, performs validation, regridding, and 
+calculates regional/global statistics. Recently refactored from multiple SLURM
+jobs to single orchestrator with distributed dataset processing.
+
+
+================================================================================
+ISSUE #1: BATCHDATASETPROCESSOR IS A GOD CLASS
+================================================================================
+
+Location
+--------
+File: model/dataset_processor.py
+Size: ~2000 lines
+Class: BatchDatasetProcessor
+
+Current State
+-------------
+Single class handles all dataset processing responsibilities:
+
+1. Configuration Management
+   - Parse YAML files with SafeLoader
+   - Validate required parameters
+   - Convert date ranges and intervals
+   - Store model names and settings
+
+2. Grid Operations
+   - Create target grids (lat/lon arrays)
+   - Calculate latitude-based weights (cos(lat))
+   - Validate grid compatibility
+
+3. Template Resolution
+   - Parse file path templates with date variables
+   - Support shift syntax: {init_YYYYMMDD,shift=-3h}
+   - Handle multi-collection fallback logic
+   - Glob pattern matching
+
+4. Variable Management
+   - Normalize variable names (e.g., T500, not t500)
+   - Resolve case-insensitive aliases
+   - Track variable collections (default, slices, aerosol)
+   - Parse 3D vs 2D variable lists
+
+5. Regridding
+   - Create xESMF regridders with conservative_normed method
+   - Cache regridders by grid dimensions
+   - Apply regridding to variables
+
+6. File Discovery
+   - Search multiple directories for existing datasets
+   - Validate dataset contents against requirements
+   - Handle forecast exclusion date logic
+
+7. Validation
+   - Check variables exist in source files
+   - Verify pressure levels available
+   - Validate calculable variable dependencies
+   - Special handling for Prithvi model levels
+
+8. Dataset Loading
+   - Open netCDF files with xarray
+   - Select pressure levels
+   - Normalize time coordinate names
+   - Handle multi-lead vs single-lead forecast files
+
+9. Variable Calculation
+   - Calculate D2m from Q2m and PS using MetPy
+   - Calculate LOGAOD from AOD
+   - Calculate Z from H (geopotential height)
+   - Calculate PM25 from multiple aerosol species
+   - Track dependencies between calculated variables
+
+10. Dataset Combining
+    - Merge multiple time points into structured arrays
+    - Build init_date × lead dimensions for forecasts
+    - Build time dimension for analysis/climatology
+    - Handle missing data gracefully
+
+11. Climatology Interpolation
+    - Calculate monthly weights based on day of month
+    - Interpolate between adjacent months
+    - Handle month boundaries (Dec→Jan, etc.)
+
+12. Metadata Management
+    - Add exclusion date metadata to forecasts
+    - Set variable attributes (long_name, units)
+    - Apply scaling factors
+    - Handle coordinate attributes
+
+13. File I/O
+    - Generate descriptive output filenames
+    - Save with compression and encoding
+    - Handle chunked dimensions
+    - Clean up temporary coordinates
+
+14. Chunk/Collection Merging
+    - Merge forecast chunk files along init_date
+    - Merge collection-specific files
+    - Delete temporary files after merge
+
+Problems This Causes
+---------------------
+- Cannot test individual responsibilities in isolation
+- Must read entire 2000-line class to understand any single method
+- Changes to one area risk breaking unrelated functionality
+- Cannot reuse components (e.g., just the regridding logic)
+- New contributors overwhelmed by class size
+- Difficult to mock for testing
+- Multiple reasons for class to change (violates Single Responsibility)
+
+Recommended Solution
+--------------------
+Split into 11 focused classes, each with single responsibility:
+
+CLASS: ConfigManager
+Purpose: Parse and validate YAML configuration
+Methods:
+  - load_from_yaml(path) -> Config
+  - validate_config(config) -> ValidationResult
+  - parse_date_range(fdates_str, spacing, exclusions) -> List[datetime]
+  - convert_interval(hours) -> str  # e.g., 12 -> "120000"
+Dependencies: yaml, datetime
+Outputs: Typed Config object with all validated settings
+
+CLASS: GridManager
+Purpose: Create and manage spatial grids
+Methods:
+  - create_target_grid(nlat, nlon, delta_lat, delta_lon) -> xr.Dataset
+  - calculate_latitude_weights(lats, lons) -> xr.DataArray
+  - validate_grid_compatibility(nlat, nlon, delta_lat, delta_lon) -> bool
+Dependencies: numpy, xarray
+Outputs: Grid datasets with coordinate arrays and weight arrays
+
+CLASS: FileResolver
+Purpose: Resolve file path templates to actual files
+Methods:
+  - resolve_template(template, date_vars, base_dir) -> List[str]
+  - parse_shift_syntax(template) -> str  # Handle {var,shift=-3h}
+  - find_files(templates, date_vars, base_dir) -> str or None
+  - get_date_variables(init_date, valid_time) -> Dict[str, str]
+Dependencies: glob, os, re, datetime
+Outputs: Actual file paths matching templates
+
+CLASS: VariableMapper
+Purpose: Manage variable names and aliases
+Methods:
+  - normalize_name(var_name) -> str  # T500 format
+  - resolve_alias(var_name, available_vars) -> str or None
+  - get_collection_variables(collection_name) -> Dict[str, List[str]]
+  - parse_variable_collections(config) -> Dict
+Dependencies: None (pure string manipulation)
+Outputs: Normalized variable names and collection mappings
+
+CLASS: RegridManager
+Purpose: Handle spatial regridding operations
+Methods:
+  - get_or_create_regridder(source_grid, target_grid) -> xe.Regridder
+  - regrid_variable(data, regridder) -> xr.DataArray
+  - clear_cache() -> None
+State: Cache of regridders by grid dimensions
+Dependencies: xesmf, xarray
+Outputs: Regridded data arrays on target grid
+
+CLASS: VariableCalculator
+Purpose: Calculate derived variables
+Methods:
+  - can_calculate(var_name) -> bool
+  - get_dependencies(var_name) -> List[str]
+  - calculate(var_name, dependency_data) -> xr.DataArray
+  - calculate_d2m(q2m, ps) -> xr.DataArray  # Dewpoint
+  - calculate_logaod(aod) -> xr.DataArray
+  - calculate_z(h) -> xr.DataArray  # Geopotential
+  - calculate_pm25(components) -> xr.DataArray
+Dependencies: metpy, numpy, xarray
+Outputs: Calculated variable arrays
+
+CLASS: DatasetValidator
+Purpose: Validate dataset contents
+Methods:
+  - validate_variables(file_path, required_vars) -> ValidationResult
+  - validate_pressure_levels(file_path, required_levels) -> ValidationResult
+  - check_calculable_dependencies(file_path, calc_vars) -> ValidationResult
+  - handle_prithvi_levels(available_levels, requested_levels) -> Mapping
+Dependencies: xarray
+Outputs: ValidationResult with found/missing items
+
+CLASS: DatasetLoader
+Purpose: Load datasets from files
+Methods:
+  - load_dataset(file_path) -> xr.Dataset
+  - select_pressure_levels(dataset, levels) -> xr.Dataset
+  - normalize_coordinates(dataset) -> xr.Dataset  # time vs valid_time
+  - select_variables(dataset, var_list) -> xr.Dataset
+Dependencies: xarray
+Outputs: Loaded and prepared xarray Datasets
+
+CLASS: DatasetCombiner
+Purpose: Combine multiple datasets into structured arrays
+Methods:
+  - combine_forecast(data_by_init_and_lead) -> xr.Dataset
+  - combine_analysis(data_by_time) -> xr.Dataset
+  - combine_climatology(data_by_cycle, valid_times) -> xr.Dataset
+  - merge_collections(collection_datasets) -> xr.Dataset
+Dependencies: xarray
+Outputs: Combined datasets with proper dimensions
+
+CLASS: ClimatologyProcessor
+Purpose: Handle monthly climatology interpolation
+Methods:
+  - calculate_monthly_weights(datetime) -> Tuple[weight1, weight2]
+  - interpolate_months(data, month1, month2, weights) -> xr.DataArray
+  - process_climatology_for_time(clim_data, datetime) -> xr.Dataset
+Dependencies: calendar, datetime, xarray
+Outputs: Time-interpolated climatology data
+
+CLASS: DatasetWriter
+Purpose: Save datasets to NetCDF files
+Methods:
+  - generate_filename(dataset_type, config, chunk_id) -> str
+  - prepare_for_save(dataset, scale_vars, add_metadata) -> xr.Dataset
+  - save_dataset(dataset, path, compression) -> None
+  - merge_chunk_files(chunk_paths, output_path) -> bool
+Dependencies: xarray, os, glob
+Outputs: NetCDF files on disk
+
+Benefits of This Split
+-----------------------
+- Each class has ~100-200 lines (manageable size)
+- Clear single responsibility for each class
+- Can test each class independently with focused unit tests
+- Can reuse components (e.g., use GridManager in other projects)
+- Easy to understand what each class does
+- Changes isolated to relevant class
+- New developers can contribute to one class at a time
+- Can mock individual dependencies for testing
+
+Migration Strategy
+------------------
+1. Create new empty class files
+2. Copy methods from BatchDatasetProcessor to appropriate new class
+3. Update method signatures to accept dependencies as parameters
+4. Add tests for each new class
+5. Update BatchDatasetProcessor to use new classes internally
+6. Once stable, replace BatchDatasetProcessor calls with new classes
+7. Deprecate BatchDatasetProcessor
+
+
+================================================================================
+ISSUE #2: CLI AND BUSINESS LOGIC ARE MIXED
+================================================================================
+
+Location
+--------
+File: controller/cli_controller.py
+Function: main()
+Size: ~300 lines
+
+Current State
+-------------
+The main() function handles:
+- Command line argument parsing
+- Argument validation
+- Default value application
+- Pipeline orchestration
+- Statistics execution
+- Error handling and formatting
+- Exit code management
+
+Example of Mixed Concerns:
+    def main():
+        # CLI parsing
+        args = parse_arguments()
+        
+        # Business validation
+        if not args.save_dir:
+            print('[ERROR] --save_dir required')
+            sys.exit(1)
+        
+        # CLI logic
+        ensure_regular_output_dir(single_fcst_mode)
+        
+        # Business logic
+        processor = BatchDatasetProcessor.from_yaml(args.config)
+        if not process_fcst:
+            processor.fcst_model = ''  # Internal manipulation
+        
+        # Pipeline execution (business logic)
+        if args.pipeline:
+            exit_code = run_pipeline_mode(args, single_fcst_mode)
+            sys.exit(exit_code)
+        
+        # More business logic
+        results = processor.process_batch(...)
+        dataset_files = results.get('dataset_files', {})
+
+Problems This Causes
+---------------------
+- Cannot test business logic without mocking sys.argv
+- Cannot test without catching sys.exit() calls
+- Cannot import pipeline logic from Jupyter notebooks
+- Cannot unit test validation rules independently
+- Slow tests (must parse arguments, setup CLI state)
+- Brittle tests (break when CLI format changes)
+- Cannot reuse pipeline logic programmatically
+
+Example Testing Problem:
+    # To test if validation logic works, must do:
+    def test_validation():
+        with patch('sys.argv', ['prog', '--config', 'test.yaml']):
+            with pytest.raises(SystemExit):
+                main()
+        # Then parse stdout to check error message
+    
+    # Very slow, fragile, hard to maintain
+
+Recommended Solution
+--------------------
+Extract testable business functions from CLI glue code.
+
+NEW FILE: model/pipeline_runner.py
+Purpose: Business logic for running pipeline
+No CLI dependencies (no argparse, no sys.exit, no print formatting)
+
+def run_pipeline(config_path: str, info_dir: str, stats_types: str,
+                fail_policy: str, branch_execution: str, resume_mode: str,
+                summary_file: str, max_workers: int, chunk_size: int) -> dict:
+    """
+    Execute the full v4 pipeline.
+    
+    Args:
+        config_path: Path to YAML config file
+        info_dir: Directory for outputs/logs
+        stats_types: 'regional', 'global', or 'both'
+        fail_policy: 'fail_fast' or 'partial_ok'
+        branch_execution: 'parallel' or 'sequential'
+        resume_mode: 'off' or 'safe'
+        summary_file: Name of summary file
+        max_workers: Max parallel workers (None = auto)
+        chunk_size: Forecast chunk size
+    
+    Returns:
+        {
+            'status': 'success' | 'failure' | 'partial',
+            'dataset_files': {'fcst': path, 'ana': path, 'clim': path},
+            'stats_results': {'regional': result, 'global': result},
+            'output_dir': str,
+        }
+    
+    Raises:
+        ConfigError: Invalid configuration
+        DatasetError: Dataset processing failed
+        StatisticsError: Statistics calculation failed
+    """
+    # All the business logic from current main()
+    # But returns dict instead of calling sys.exit()
+    # And raises exceptions instead of printing errors
+    pass
+
+def validate_pipeline_config(config_path: str, stats_types: str) -> None:
+    """
+    Validate pipeline configuration.
+    
+    Raises:
+        ConfigError: If validation fails
+    """
+    pass
+
+def build_datasets(config_path: str, info_dir: str, 
+                  max_workers: int, chunk_size: int) -> dict:
+    """
+    Build all required datasets.
+    
+    Returns:
+        {'fcst': path, 'ana': path, 'clim': path}
+    
+    Raises:
+        DatasetError: If dataset building fails
+    """
+    pass
+
+def run_statistics(dataset_files: dict, stats_types: str, 
+                   info_dir: str) -> dict:
+    """
+    Run statistics calculations.
+    
+    Returns:
+        {'regional': result, 'global': result}
+    
+    Raises:
+        StatisticsError: If calculation fails
+    """
+    pass
+
+UPDATED: controller/cli_controller.py
+Purpose: ONLY CLI concerns (parsing, formatting, exit codes)
+
+def main():
+    """CLI entry point - handles user interaction only"""
+    args = parse_arguments()
+    
+    # Convert CLI args to function parameters
+    try:
+        result = run_pipeline(
+            config_path=args.config,
+            info_dir=args.info_dir,
+            stats_types=args.stats_types,
+            fail_policy=args.pipeline_fail_policy,
+            branch_execution=args.pipeline_branch_execution,
+            resume_mode=args.pipeline_resume_mode,
+            summary_file=args.pipeline_summary_file,
+            max_workers=args.pipeline_max_workers_dataset,
+            chunk_size=args.pipeline_chunk_size_fcst,
+        )
+        
+        # Format success output
+        print('\n' + '='*50)
+        print('✓ PIPELINE COMPLETED SUCCESSFULLY')
+        print('='*50)
+        print(f'Output directory: {result["output_dir"]}')
+        print(f'Summary: {result["summary_file"]}')
+        sys.exit(0)
+        
+    except ConfigError as e:
+        print(f'\n[ERROR] Configuration invalid: {e}')
+        sys.exit(1)
+    except DatasetError as e:
+        print(f'\n[ERROR] Dataset processing failed: {e}')
+        sys.exit(2)
+    except StatisticsError as e:
+        print(f'\n[ERROR] Statistics calculation failed: {e}')
+        sys.exit(3)
+    except Exception as e:
+        print(f'\n[ERROR] Unexpected error: {e}')
+        traceback.print_exc()
+        sys.exit(99)
+
+Benefits of This Split
+-----------------------
+- Can test run_pipeline() without CLI:
+    result = run_pipeline(config_path='test.yaml', ...)
+    assert result['status'] == 'success'
+
+- Fast unit tests (no argument parsing overhead)
+
+- Can import and use programmatically:
+    from model.pipeline_runner import run_pipeline
+    result = run_pipeline(...)  # From notebook or script
+
+- Clear separation of concerns:
+    CLI layer: User interaction, formatting, exit codes
+    Business layer: Pipeline logic, validation, orchestration
+
+- Easy to mock and test business logic independently
+
+- Clear exception contracts (not sys.exit() scattered everywhere)
+
+Implementation Steps
+--------------------
+1. Create model/pipeline_runner.py with function signatures
+2. Move business logic from main() to run_pipeline()
+3. Replace sys.exit() with return/raise in run_pipeline()
+4. Replace print() with proper exceptions in run_pipeline()
+5. Update main() to call run_pipeline() and format output
+6. Write unit tests for run_pipeline()
+7. Write integration tests for CLI
+
+
+================================================================================
+ISSUE #3: HARD-CODED CONSTANTS WITH SCATTERED USAGE
+================================================================================
+
+Location
+--------
+File: model/constants.py
+Used in: model/dataset_processor.py (multiple places)
+
+Current State
+-------------
+Constants defined in one file:
+
+VARS_SCALE_MAP = {
+    'T': 1.0,
+    'Q': 1000.0,
+    'U': 1.0,
+    'V': 1.0,
+    'Z': 1.0,
+    'H': 1.0,
+    'T2m': 1.0,
+    'D2m': 1.0,
+    'U10m': 1.0,
+    'V10m': 1.0,
+    'P': 1.0,
+    'PS': 0.01,  # Pa to hPa
+    # ... more
+}
+
+VARS_UNIT_MAP = {
+    'T': 'K',
+    'Q': 'g/kg',
+    'U': 'm/s',
+    # ... more
+}
+
+VARS_LONG_MAP = {
+    'T': 'Temperature',
+    'Q': 'Specific Humidity',
+    # ... more
+}
+
+CALCULABLE_VARS = {
+    'D2m': ['Q2m', 'PS'],  # Dewpoint from specific humidity and pressure
+    'LOGAOD': ['AOD'],
+    'Z': ['H'],  # Geopotential from height
+    'PM25': ['SSSMASS25', 'DUSMASS25', 'BCSMASS', 'OCSMASS', 
+             'SO4SMASS', 'NISMASS25', 'NH4SMASS'],
+}
+
+PRITHVI_PRESSURE_LVLS = {
+    1: 1000, 2: 975, 3: 950, 4: 925, 5: 900,
+    # ... mapping model levels to pressure
+}
+
+But usage logic is scattered throughout dataset_processor.py:
+
+    # In one method:
+    if var_upper in VARS_SCALE_MAP:
+        scale_factor = VARS_SCALE_MAP[var_upper]
+        ds[var] = ds[var] * scale_factor
+    
+    # In another method:
+    if calc_var == 'D2m':
+        # Hardcoded calculation logic here
+        q2m_with_units = ds['Q2m'] * units('kg/kg')
+        ps_with_units = ds['PS'] * units.Pa
+        dewpoint = mpcalc.dewpoint_from_specific_humidity(...)
+    elif calc_var == 'PM25':
+        # Different hardcoded calculation
+        ds[calc_var] = (ds['SSSMASS25'] + ds['DUSMASS25'] + ...)
+    
+    # In yet another method:
+    if var_upper in VARS_LONG_MAP:
+        var_data.attrs['long_name'] = VARS_LONG_MAP[var_upper]
+
+Problems This Causes
+---------------------
+- Cannot configure variable metadata from files (all hard-coded)
+- Cannot validate that all variables have required metadata
+- Calculation logic scattered in if/elif chains
+- No clear API for variable metadata
+- Hard to mock for testing
+- Cannot add new calculable variables without editing multiple places
+- No validation that CALCULABLE_VARS dependencies exist in other maps
+
+Recommended Solution
+--------------------
+Create centralized variable registry with clear API.
+
+NEW FILE: model/variable_registry.py
+Purpose: Centralized variable metadata and calculation logic
+
+class VariableRegistry:
+    """
+    Central registry for variable metadata and calculations.
+    
+    Can load from YAML config or use defaults.
+    Validates internal consistency.
+    """
+    
+    def __init__(self, config_path: str = None):
+        """
+        Initialize registry.
+        
+        Args:
+            config_path: Optional path to variable config YAML
+                        If None, uses hard-coded defaults
+        """
+        if config_path:
+            self._load_from_yaml(config_path)
+        else:
+            self._load_defaults()
+        
+        self._validate()
+    
+    def get_scale_factor(self, var_name: str) -> float:
+        """
+        Get scaling factor for variable.
+        
+        Args:
+            var_name: Variable name (case-insensitive)
+        
+        Returns:
+            Scale factor (default 1.0 if not found)
+        """
+        return self.scale_map.get(var_name.upper(), 1.0)
+    
+    def get_units(self, var_name: str) -> str:
+        """Get units for variable (e.g., 'K', 'm/s')"""
+        return self.unit_map.get(var_name.upper())
+    
+    def get_long_name(self, var_name: str) -> str:
+        """Get descriptive name for variable"""
+        return self.long_name_map.get(var_name.upper())
+    
+    def is_calculable(self, var_name: str) -> bool:
+        """Check if variable can be calculated from others"""
+        return var_name in self.calculable_vars
+    
+    def get_dependencies(self, var_name: str) -> List[str]:
+        """
+        Get dependency variables needed to calculate this variable.
+        
+        Raises:
+            ValueError: If variable is not calculable
+        """
+        if not self.is_calculable(var_name):
+            raise ValueError(f'{var_name} is not a calculable variable')
+        return self.calculable_vars[var_name]
+    
+    def calculate(self, var_name: str, 
+                  dependency_data: Dict[str, xr.DataArray]) -> xr.DataArray:
+        """
+        Calculate derived variable from dependencies.
+        
+        Args:
+            var_name: Name of variable to calculate
+            dependency_data: Dict mapping dependency names to data arrays
+        
+        Returns:
+            Calculated data array
+        
+        Raises:
+            ValueError: If dependencies missing or calculation fails
+        """
+        if not self.is_calculable(var_name):
+            raise ValueError(f'{var_name} is not calculable')
+        
+        # Dispatch to specific calculation method
+        calculator = self._calculators.get(var_name)
+        if not calculator:
+            raise ValueError(f'No calculator registered for {var_name}')
+        
+        return calculator(dependency_data)
+    
+    def _calculate_d2m(self, deps: Dict[str, xr.DataArray]) -> xr.DataArray:
+        """Calculate 2m dewpoint from Q2m and PS"""
+        q2m_with_units = deps['Q2m'] * units('kg/kg')
+        ps_with_units = deps['PS'] * units.Pa
+        dewpoint_celsius = mpcalc.dewpoint_from_specific_humidity(
+            ps_with_units, q2m_with_units)
+        kelvin_values = dewpoint_celsius.values + 273.15
+        return xr.DataArray(
+            kelvin_values,
+            coords=dewpoint_celsius.coords,
+            dims=dewpoint_celsius.dims
+        )
+    
+    def _calculate_logaod(self, deps: Dict[str, xr.DataArray]) -> xr.DataArray:
+        """Calculate log of AOD"""
+        return np.log(deps['AOD'] + 0.01)
+    
+    def _calculate_z(self, deps: Dict[str, xr.DataArray]) -> xr.DataArray:
+        """Calculate geopotential from geopotential height"""
+        g = 9.80665  # m/s²
+        z = deps['H'] * g
+        z.attrs['long_name'] = 'Geopotential'
+        z.attrs['units'] = 'm²/s²'
+        return z
+    
+    def _calculate_pm25(self, deps: Dict[str, xr.DataArray]) -> xr.DataArray:
+        """Calculate PM2.5 from aerosol species"""
+        return (deps['SSSMASS25'] + deps['DUSMASS25'] + deps['BCSMASS'] +
+                deps['OCSMASS'] + deps['SO4SMASS'] + deps['NISMASS25'] +
+                deps['NH4SMASS'])
+    
+    def _load_from_yaml(self, config_path: str) -> None:
+        """Load variable metadata from YAML file"""
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+        
+        self.scale_map = config['variable_scales']
+        self.unit_map = config['variable_units']
+        self.long_name_map = config['variable_long_names']
+        self.calculable_vars = config['calculable_variables']
+        self.prithvi_levels = config.get('prithvi_pressure_levels', {})
+        
+        # Register calculators
+        self._register_calculators()
+    
+    def _load_defaults(self) -> None:
+        """Load hard-coded defaults from constants.py"""
+        from model.constants import (
+            VARS_SCALE_MAP, VARS_UNIT_MAP, VARS_LONG_MAP,
+            CALCULABLE_VARS, PRITHVI_PRESSURE_LVLS
+        )
+        
+        self.scale_map = VARS_SCALE_MAP
+        self.unit_map = VARS_UNIT_MAP
+        self.long_name_map = VARS_LONG_MAP
+        self.calculable_vars = CALCULABLE_VARS
+        self.prithvi_levels = PRITHVI_PRESSURE_LVLS
+        
+        self._register_calculators()
+    
+    def _register_calculators(self) -> None:
+        """Map calculable variable names to calculation methods"""
+        self._calculators = {
+            'D2m': self._calculate_d2m,
+            'LOGAOD': self._calculate_logaod,
+            'Z': self._calculate_z,
+            'PM25': self._calculate_pm25,
+        }
+    
+    def _validate(self) -> None:
+        """Validate internal consistency of registry"""
+        errors = []
+        
+        # Check calculable variables have registered calculators
+        for var_name in self.calculable_vars.keys():
+            if var_name not in self._calculators:
+                errors.append(f'No calculator for {var_name}')
+        
+        # Check calculable variables have metadata
+        for var_name in self.calculable_vars.keys():
+            if var_name not in self.scale_map:
+                errors.append(f'{var_name} missing scale factor')
+            if var_name not in self.unit_map:
+                errors.append(f'{var_name} missing units')
+            if var_name not in self.long_name_map:
+                errors.append(f'{var_name} missing long name')
+        
+        if errors:
+            raise ValueError(f'Variable registry validation failed:\n' +
+                           '\n'.join(f'  - {e}' for e in errors))
+
+Usage Example:
+
+    # In dataset_processor or wherever needed:
+    registry = VariableRegistry()  # Uses defaults
+    
+    # Or load from file:
+    registry = VariableRegistry('config/variables.yaml')
+    
+    # Get metadata:
+    scale = registry.get_scale_factor('T')
+    units = registry.get_units('Q')
+    
+    # Check if calculable:
+    if registry.is_calculable('D2m'):
+        deps = registry.get_dependencies('D2m')  # ['Q2m', 'PS']
+        
+        # Calculate:
+        result = registry.calculate('D2m', {
+            'Q2m': q2m_data,
+            'PS': ps_data
+        })
+
+Optional YAML Config Format:
+
+    # config/variables.yaml
+    variable_scales:
+      T: 1.0
+      Q: 1000.0
+      PS: 0.01
+      # ...
+    
+    variable_units:
+      T: K
+      Q: g/kg
+      PS: hPa
+      # ...
+    
+    variable_long_names:
+      T: Temperature
+      Q: Specific Humidity
+      PS: Surface Pressure
+      # ...
+    
+    calculable_variables:
+      D2m: [Q2m, PS]
+      LOGAOD: [AOD]
+      Z: [H]
+      PM25: [SSSMASS25, DUSMASS25, BCSMASS, OCSMASS, SO4SMASS, 
+            NISMASS25, NH4SMASS]
+
+Benefits of This Approach
+--------------------------
+- Single source of truth for variable metadata
+- Clear API prevents mistakes
+- Easy to add new variables (just update YAML)
+- Can validate registry on startup
+- Calculation logic centralized, not scattered
+- Easy to mock for testing
+- Can have multiple registries (different model configs)
+- Self-documenting (clear methods vs dict lookups)
+
+Implementation Steps
+--------------------
+1. Create model/variable_registry.py with class
+2. Move calculation methods from dataset_processor to registry
+3. Add validation logic to __init__
+4. Update dataset_processor to use registry instead of constants
+5. Create optional YAML config format
+6. Write unit tests for registry
+7. Add validation that all used variables are in registry
+
+
+================================================================================
+ISSUE #4: INCONSISTENT ERROR HANDLING
+================================================================================
+
+Location
+--------
+Throughout codebase, but especially:
+- model/dataset_processor.py
+- controller/cli_controller.py
+- model/dataset_parallel_executor.py
+- model/statistics_processor.py
+
+Current State
+-------------
+Three different error handling patterns used:
+
+Pattern 1: Return Status Dicts
+    def some_function():
+        if error_condition:
+            return {
+                'status': 'failed',
+                'reason': 'error description',
+                'errors': [...]
+            }
+        return {'status': 'success', 'data': ...}
+
+Pattern 2: Raise Exceptions
+    def another_function():
+        if error_condition:
+            raise ValueError('Error description')
+
+Pattern 3: Print and Exit/Return
+    def third_function():
+        if error_condition:
+            print('[ERROR] Error description')
+            return False  # or sys.exit(1)
+
+Real Examples from Codebase:
+
+    # dataset_processor.py line ~1100
+    if missing_vars or missing_levels:
+        error_parts = []
+        if missing_vars:
+            error_parts.append(f'Variables not found: {missing_vars}')
+        raise ValueError(f'{dataset_type} validation failed - '
+                        f'{"; ".join(error_parts)}')
+    
+    # cli_controller.py line ~400
+    if validation_errors:
+        print('\n[ERROR] DATASET VALIDATION FAILED')
+        for error in validation_errors:
+            print(f'  {error}')
+        sys.exit(1)
+    
+    # dataset_parallel_executor.py line ~130
+    if chunk_failures:
+        return {
+            'status': 'failed',
+            'reason': 'forecast_chunk_failures',
+            'errors': chunk_failures,
+        }
+    
+    # dataset_processor.py line ~2200
+    def merge_forecast_chunks(...) -> bool:
+        if not chunk_files:
+            print('[ERROR] No forecast chunk files found')
+            return False
+
+Problems This Causes
+---------------------
+- Callers must handle 3 different error patterns
+- Cannot catch specific error types
+- Error context often lost (just strings)
+- Hard to add logging or error reporting
+- Tests must check different things (dict keys vs exceptions vs return codes)
+- Cannot recover from specific errors
+- Stack traces lost when returning status dicts
+- Debugging difficult (where did error originate?)
+
+Recommended Solution
+--------------------
+Use custom exception hierarchy consistently throughout codebase.
+
+NEW FILE: model/exceptions.py
+Purpose: Define all custom exceptions for the pipeline
+
+class WeatherStatsError(Exception):
+    """Base exception for all weather stats pipeline errors"""
+    pass
+
+class ConfigError(WeatherStatsError):
+    """Configuration validation or parsing failed"""
+    def __init__(self, message: str, config_path: str = None):
+        self.config_path = config_path
+        super().__init__(message)
+
+class DatasetValidationError(WeatherStatsError):
+    """Dataset validation failed (missing variables or pressure levels)"""
+    def __init__(self, dataset_type: str, missing_vars: List[str] = None,
+                 missing_levels: List[int] = None):
+        self.dataset_type = dataset_type
+        self.missing_vars = missing_vars or []
+        self.missing_levels = missing_levels or []
+        super().__init__(self._format_message())
+    
+    def _format_message(self):
+        parts = [f'{self.dataset_type} validation failed']
+        if self.missing_vars:
+            parts.append(f'Missing variables: {", ".join(self.missing_vars)}')
+        if self.missing_levels:
+            levels_str = ', '.join(str(lv) for lv in self.missing_levels)
+            parts.append(f'Missing pressure levels: {levels_str}')
+        return ' - '.join(parts)
+
+class FileNotFoundError(WeatherStatsError):
+    """Required input file not found"""
+    def __init__(self, file_type: str, search_paths: List[str],
+                 context: str = None):
+        self.file_type = file_type
+        self.search_paths = search_paths
+        self.context = context
+        super().__init__(self._format_message())
+    
+    def _format_message(self):
+        msg = f'{self.file_type} file not found'
+        if self.context:
+            msg += f' ({self.context})'
+        msg += f'\nSearched paths:\n'
+        msg += '\n'.join(f'  - {p}' for p in self.search_paths)
+        return msg
+
+class ChunkProcessingError(WeatherStatsError):
+    """Dataset chunk processing failed"""
+    def __init__(self, chunk_range: tuple, original_error: Exception):
+        self.chunk_range = chunk_range
+        self.original_error = original_error
+        super().__init__(
+            f'Chunk {chunk_range[0]}-{chunk_range[1]} failed: '
+            f'{original_error}'
+        )
+
+class MergeError(WeatherStatsError):
+    """Failed to merge chunk or collection files"""
+    def __init__(self, merge_type: str, num_files: int,
+                 original_error: Exception = None):
+        self.merge_type = merge_type
+        self.num_files = num_files
+        self.original_error = original_error
+        super().__init__(self._format_message())
+    
+    def _format_message(self):
+        msg = f'Failed to merge {self.num_files} {self.merge_type} files'
+        if self.original_error:
+            msg += f': {self.original_error}'
+        return msg
+
+class VariableCalculationError(WeatherStatsError):
+    """Failed to calculate derived variable"""
+    def __init__(self, var_name: str, missing_dependencies: List[str] = None,
+                 calculation_error: Exception = None):
+        self.var_name = var_name
+        self.missing_dependencies = missing_dependencies or []
+        self.calculation_error = calculation_error
+        super().__init__(self._format_message())
+    
+    def _format_message(self):
+        msg = f'Failed to calculate {self.var_name}'
+        if self.missing_dependencies:
+            deps = ', '.join(self.missing_dependencies)
+            msg += f' - missing dependencies: {deps}'
+        if self.calculation_error:
+            msg += f' - {self.calculation_error}'
+        return msg
+
+class StatisticsError(WeatherStatsError):
+    """Statistics calculation failed"""
+    def __init__(self, stats_type: str, message: str):
+        self.stats_type = stats_type
+        super().__init__(f'{stats_type} statistics failed: {message}')
+
+class RegridError(WeatherStatsError):
+    """Regridding operation failed"""
+    def __init__(self, var_name: str, source_grid: str, target_grid: str,
+                 original_error: Exception):
+        self.var_name = var_name
+        self.source_grid = source_grid
+        self.target_grid = target_grid
+        self.original_error = original_error
+        super().__init__(
+            f'Failed to regrid {var_name} from {source_grid} to '
+            f'{target_grid}: {original_error}'
+        )
+
+Update Business Logic to Raise Exceptions:
+
+    # OLD: dataset_processor.py
+    if missing_vars or missing_levels:
+        raise ValueError(f'{dataset_type} validation failed...')
+    
+    # NEW: dataset_processor.py
+    if missing_vars or missing_levels:
+        raise DatasetValidationError(
+            dataset_type=dataset_type,
+            missing_vars=missing_vars,
+            missing_levels=missing_levels
+        )
+    
+    # OLD: dataset_processor.py
+    if not chunk_files:
+        print('[ERROR] No forecast chunk files found')
+        return False
+    
+    # NEW: dataset_processor.py
+    if not chunk_files:
+        raise FileNotFoundError(
+            file_type='forecast chunks',
+            search_paths=[pattern],
+            context='merge operation'
+        )
+    
+    # OLD: dataset_parallel_executor.py
+    if chunk_failures:
+        return {
+            'status': 'failed',
+            'reason': 'forecast_chunk_failures',
+            'errors': chunk_failures,
+        }
+    
+    # NEW: dataset_parallel_executor.py
+    if chunk_failures:
+        # Raise the first failure (or combine into aggregate exception)
+        raise chunk_failures[0]
+
+Update CLI to Catch and Format:
+
+    # controller/cli_controller.py
+    def main():
+        args = parse_arguments()
+        
+        try:
+            result = run_pipeline(...)
+            
+            print('\n' + '='*50)
+            print('✓ PIPELINE COMPLETED SUCCESSFULLY')
+            print('='*50)
+            sys.exit(0)
+            
+        except ConfigError as e:
+            print(f'\n[ERROR] Configuration Error')
+            print(f'  {e}')
+            if e.config_path:
+                print(f'  Config file: {e.config_path}')
+            sys.exit(1)
+            
+        except DatasetValidationError as e:
+            print(f'\n[ERROR] Dataset Validation Failed')
+            print(f'  Dataset: {e.dataset_type}')
+            if e.missing_vars:
+                print(f'  Missing variables:')
+                for var in e.missing_vars:
+                    print(f'    - {var}')
+            if e.missing_levels:
+                print(f'  Missing pressure levels:')
+                for lv in e.missing_levels:
+                    print(f'    - {lv} hPa')
+            sys.exit(2)
+            
+        except FileNotFoundError as e:
+            print(f'\n[ERROR] File Not Found')
+            print(f'  Type: {e.file_type}')
+            if e.context:
+                print(f'  Context: {e.context}')
+            print(f'  Searched paths:')
+            for path in e.search_paths:
+                print(f'    - {path}')
+            sys.exit(3)
+            
+        except ChunkProcessingError as e:
+            print(f'\n[ERROR] Chunk Processing Failed')
+            print(f'  Chunk range: {e.chunk_range[0]}-{e.chunk_range[1]}')
+            print(f'  Error: {e.original_error}')
+            sys.exit(4)
+            
+        except StatisticsError as e:
+            print(f'\n[ERROR] Statistics Calculation Failed')
+            print(f'  Type: {e.stats_type}')
+            print(f'  Error: {str(e)}')
+            sys.exit(5)
+            
+        except WeatherStatsError as e:
+            # Catch-all for other pipeline errors
+            print(f'\n[ERROR] Pipeline Error')
+            print(f'  {e}')
+            traceback.print_exc()
+            sys.exit(10)
+            
+        except Exception as e:
+            # Unexpected errors
+            print(f'\n[ERROR] Unexpected Error')
+            print(f'  {e}')
+            traceback.print_exc()
+            sys.exit(99)
+
+Benefits of This Approach
+--------------------------
+- Consistent error handling throughout codebase
+- Rich error objects with structured context
+- Easy to catch specific error types for recovery
+- Stack traces preserved (exceptions, not status dicts)
+- CLI layer formats errors nicely for users
+- Business logic stays clean (just raise)
+- Easy to add error logging/reporting
+- Can test for specific exception types
+- Error context accessible programmatically (e.missing_vars, etc.)
+- Different exit codes for different error types
+
+Implementation Steps
+--------------------
+1. Create model/exceptions.py with exception classes
+2. Update dataset_processor.py to raise exceptions
+3. Update dataset_parallel_executor.py to raise exceptions
+4. Update statistics_processor.py to raise exceptions
+5. Update cli_controller.py to catch and format
+6. Remove status dict return patterns
+7. Remove print-and-return-false patterns
+8. Update tests to use pytest.raises()
+
+
+================================================================================
+ISSUE #5: TIGHT COUPLING BETWEEN COMPONENTS
+================================================================================
+
+Location
+--------
+Especially between:
+- model/dataset_parallel_executor.py → model/dataset_processor.py
+- controller/cli_controller.py → model/dataset_processor.py
+- model/statistics_processor.py → model/dataset_processor.py
+
+Current State
+-------------
+Components directly import and manipulate each other's internals.
+
+Example 1: Parallel Executor Manipulates Processor
+    # dataset_parallel_executor.py
+    from model.dataset_processor import BatchDatasetProcessor
+    
+    def run_parallel_source_dataset_build(...):
+        # Directly creates processor
+        processor = BatchDatasetProcessor.from_yaml(config_path)
+        
+        # Directly manipulates internal state
+        processor.ana_model = ''
+        processor.clim_model = ''
+        
+        # Directly calls methods
+        results = processor.process_batch(...)
+
+Example 2: CLI Manipulates Processor
+    # cli_controller.py
+    processor = BatchDatasetProcessor.from_yaml(args.config)
+    
+    # Manipulate internals based on flags
+    if not process_fcst:
+        processor.fcst_model = ''
+    if not process_ana:
+        processor.ana_model = ''
+    if not process_clim:
+        processor.clim_model = ''
+
+Example 3: Methods Know Too Much About Each Other
+    # In dataset_processor.py, method A directly uses method B's internals
+    def method_a(self):
+        # Knows that method_b stores state in self.regridders
+        if 'some_key' not in self.regridders:
+            self.method_b()
+
+Problems This Causes
+---------------------
+- Cannot swap implementations (must use BatchDatasetProcessor)
+- Cannot test components without full dependency tree
+- Changes ripple across files unpredictably
+- Hard to mock for testing
+- Violates encapsulation (reaching into internals)
+- Cannot run components independently
+- Cannot reuse components in other contexts
+
+Recommended Solution
+--------------------
+Use dependency injection and clear interfaces.
+
+Pattern 1: Inject Dependencies
+
+    # OLD: dataset_coordinator.py
+    def build_dataset(...):
+        processor = BatchDatasetProcessor.from_yaml(config)
+        return processor.process()
+    
+    # NEW: dataset_coordinator.py
+    class DatasetCoordinator:
+        def __init__(self, processor_factory: IProcessorFactory,
+                     validator: IDatasetValidator):
+            """Inject dependencies instead of creating internally"""
+            self.processor_factory = processor_factory
+            self.validator = validator
+        
+        def build_dataset(self, dataset_type, config):
+            # Use injected factory
+            processor = self.processor_factory.create(
+                dataset_type=dataset_type,
+                config=config
+            )
+            
+            # Use injected validator
+            validation = self.validator.validate(processor.output)
+            
+            return processor.process()
+    
+    # Usage in production:
+    coordinator = DatasetCoordinator(
+        processor_factory=BatchProcessorFactory(),
+        validator=StandardValidator()
+    )
+    
+    # Usage in tests:
+    coordinator = DatasetCoordinator(
+        processor_factory=MockProcessorFactory(),
+        validator=MockValidator()
+    )
+
+Pattern 2: Define Clear Interfaces
+
+    # model/interfaces.py
+    from abc import ABC, abstractmethod
+    
+    class IDatasetProcessor(ABC):
+        """Interface for dataset processing"""
+        
+        @abstractmethod
+        def process(self, dataset_type: str, config: dict,
+                   options: dict) -> dict:
+            """
+            Process a dataset.
+            
+            Args:
+                dataset_type: 'fcst', 'ana', or 'clim'
+                config: Configuration dictionary
+                options: Processing options
+            
+            Returns:
+                {'path': str, 'metadata': dict}
+            
+            Raises:
+                DatasetError: If processing fails
+            """
+            pass
+        
+        @abstractmethod
+        def validate(self, dataset_type: str, config: dict) -> bool:
+            """Check if dataset can be processed"""
+            pass
+    
+    class IProcessorFactory(ABC):
+        """Factory for creating processors"""
+        
+        @abstractmethod
+        def create(self, dataset_type: str, config: dict) -> IDatasetProcessor:
+            """Create appropriate processor for dataset type"""
+            pass
+    
+    class IDatasetValidator(ABC):
+        """Interface for dataset validation"""
+        
+        @abstractmethod
+        def validate(self, dataset_path: str,
+                    requirements: dict) -> ValidationResult:
+            """Validate dataset meets requirements"""
+            pass
+
+Pattern 3: Use Configuration Objects Instead of Manipulation
+
+    # OLD: Manipulate processor internals
+    processor = BatchDatasetProcessor.from_yaml(config)
+    processor.fcst_model = ''  # Disable forecast
+    processor.ana_model = ''   # Disable analysis
+    results = processor.process_batch(...)
+    
+    # NEW: Pass configuration explicitly
+    processor = BatchDatasetProcessor.from_yaml(config)
+    results = processor.process_batch(
+        enabled_datasets=['clim'],  # Explicit configuration
+        ...
+    )
+    
+    # Or even better: Create specific processor
+    processor = ClimatologyProcessor.from_yaml(config)
+    results = processor.process()
+
+Example Refactored Structure:
+
+    # model/interfaces.py
+    class IDatasetProcessor(ABC):
+        @abstractmethod
+        def process(self, config: ProcessConfig) -> ProcessResult:
+            pass
+    
+    # model/dataset_processor.py
+    class BatchDatasetProcessor(IDatasetProcessor):
+        def __init__(self, grid_manager: GridManager,
+                     file_resolver: FileResolver,
+                     regrid_manager: RegridManager):
+            # Dependencies injected
+            self.grid_manager = grid_manager
+            self.file_resolver = file_resolver
+            self.regrid_manager = regrid_manager
+        
+        def process(self, config: ProcessConfig) -> ProcessResult:
+            # Use injected dependencies
+            grid = self.grid_manager.create_grid(config.grid_spec)
+            files = self.file_resolver.find_files(config.file_spec)
+            # ...
+    
+    # model/factories.py
+    class ProcessorFactory(IProcessorFactory):
+        def create(self, dataset_type: str, config: dict) -> IDatasetProcessor:
+            # Create with appropriate dependencies
+            grid_manager = GridManager()
+            file_resolver = FileResolver(config['base_dirs'])
+            regrid_manager = RegridManager()
+            
+            if dataset_type == 'fcst':
+                return ForecastProcessor(
+                    grid_manager, file_resolver, regrid_manager)
+            elif dataset_type == 'ana':
+                return AnalysisProcessor(
+                    grid_manager, file_resolver, regrid_manager)
+            # ...
+    
+    # Usage:
+    factory = ProcessorFactory()
+    processor = factory.create('fcst', config)
+    result = processor.process(process_config)
+
+Benefits of This Approach
+--------------------------
+- Easy to swap implementations (just inject different object)
+- Easy to mock for testing (inject mock objects)
+- Clear contracts (interfaces define expectations)
+- Changes isolated to implementation, not interface
+- Can test components independently
+- Can reuse components in different contexts
+- No reaching into internal state
+- Type-safe with proper type hints
+
+Implementation Steps
+--------------------
+1. Create model/interfaces.py with ABC interfaces
+2. Update BatchDatasetProcessor to implement IDatasetProcessor
+3. Create factory classes
+4. Update dataset_parallel_executor to use factory pattern
+5. Update cli_controller to use dependency injection
+6. Remove direct state manipulation (model = '')
+7. Add type hints throughout
+8. Write unit tests with mocks
+
+
+================================================================================
+ISSUE #6: MIXED LEVELS OF ABSTRACTION
+================================================================================
+
+Location
+--------
+Throughout codebase, especially:
+- controller/cli_controller.py main() function
+- model/dataset_processor.py process_batch() method
+- model/dataset_parallel_executor.py
+
+Current State
+-------------
+High-level orchestration code mixed with low-level implementation details.
+
+Example from cli_controller.py main():
+
+    def main():
+        # High level: Parse arguments
+        args = parse_arguments()
+        
+        # High level: Run pipeline
+        if args.pipeline:
+            exit_code = run_pipeline_mode(args, single_fcst_mode)
+            sys.exit(exit_code)
+        
+        # Suddenly low level: Create processor with internal knowledge
+        processor = BatchDatasetProcessor.from_yaml(args.config, 
+                                                    single_fcst_mode)
+        
+        # Very low level: Manipulate internal state
+        if not process_fcst:
+            processor.fcst_model = ''  # Know about model attributes
+        if not process_ana:
+            processor.ana_model = ''
+        if not process_clim:
+            processor.clim_model = ''
+        
+        # High level: Process
+        results = processor.process_batch(...)
+        
+        # Low level: Inspect result dict structure
+        if results['status'] == 'check_only_success':
+            sys.exit(0)
+        elif results['status'] != 'success':
+            print(f'[ERROR] Dataset creation failed: '
+                  f'{results.get("reason", "Unknown")}')
+            sys.exit(1)
+        
+        # Medium level: Get dataset info
+        dataset_files = results.get('dataset_files', {})
+        
+        # More low level: Create stats processor with internal knowledge
+        stats_processor = StatisticsProcessor(
+            processor.config,  # Reaching into processor for config
+            dataset_files=dataset_files,
+            init_dates=init_dates,
+            leads=leads
+        )
+
+Main function shouldn't know about:
+- processor.fcst_model attribute
+- results dict structure
+- processor.config internals
+
+Example from dataset_processor.py process_batch():
+
+    def process_batch(self, target_coll=None, info_dir=None, ...):
+        # High level: Print header
+        print('=== Multi-Variable Batch Forecast Processing ===')
+        
+        # Medium level: Parse dates
+        init_dates = self._parse_date_range_with_spacing(...)
+        
+        # Low level: String formatting and spacing logic
+        spacing = self.config.get('fcst_spacing', 1)
+        exclude_dates = self.config.get('exclude_dates', [])
+        
+        # Very low level: Datetime manipulation
+        current = start_date
+        while current <= end_date:
+            dates.append(current)
+            current += timedelta(days=spacing)
+        
+        # Back to high level: Check for existing
+        existing_datasets = self._check_for_existing_datasets()
+        
+        # Low level: Dict key checking
+        if 'fcst' in existing_datasets:
+            print(f'Found: {existing_datasets["fcst"]}')
+        
+        # Medium level: Validation
+        validation_result = self._validate_variables_and_levels(...)
+        
+        # Low level: Error dict structure inspection
+        if isinstance(validation_result, str):
+            validation_errors.append(validation_result)
+
+Problems This Causes
+---------------------
+- Hard to understand what function does at a glance
+- Must read implementation details to understand flow
+- Cannot skim code to understand high-level logic
+- Difficult to identify where to make changes
+- Testing requires understanding multiple abstraction levels
+- Cannot delegate subtasks cleanly
+
+Recommended Solution
+--------------------
+Organize code in clear abstraction layers.
+
+Layer 1: High-Level Orchestration (What)
+    """This layer answers: What are the major steps?"""
+    
+    def run_pipeline(config):
+        """Run complete pipeline"""
+        validate_configuration(config)
+        datasets = build_all_datasets(config)
+        stats = calculate_statistics(datasets, config)
+        finalize_outputs(stats, config)
+        return PipelineResult(success=True, outputs=stats)
+
+Layer 2: Workflow Coordination (How)
+    """This layer answers: How do we accomplish each step?"""
+    
+    def build_all_datasets(config):
+        """Build all required datasets"""
+        builder = DatasetBuilder(config)
+        
+        results = {}
+        for dataset_type in config.enabled_datasets:
+            if builder.needs_building(dataset_type):
+                results[dataset_type] = builder.build(dataset_type)
+            else:
+                results[dataset_type] = builder.get_existing(dataset_type)
+        
+        return results
+
+Layer 3: Implementation Details (Details)
+    """This layer answers: What are the specific mechanics?"""
+    
+    def build(self, dataset_type):
+        """Build one dataset with all details"""
+        files = self._discover_files(dataset_type)
+        validation = self._validate_files(files)
+        data = self._load_and_process(files, validation)
+        output_path = self._save_dataset(data, dataset_type)
+        return output_path
+
+Example Refactored:
+
+    # HIGH LEVEL: pipeline_orchestrator.py
+    class PipelineOrchestrator:
+        def run(self, config: PipelineConfig) -> PipelineResult:
+            """Execute complete pipeline (high-level steps only)"""
+            self._preflight_checks(config)
+            datasets = self._build_datasets(config)
+            stats = self._compute_statistics(datasets, config)
+            self._finalize(stats, config)
+            return PipelineResult(success=True, outputs=stats)
+        
+        def _build_datasets(self, config: PipelineConfig) -> DatasetFiles:
+            """Coordinate dataset building"""
+            builder = DatasetBuilder(config)
+            return builder.build_all()
+        
+        def _compute_statistics(self, datasets: DatasetFiles,
+                               config: PipelineConfig) -> StatsResults:
+            """Coordinate statistics computation"""
+            calculator = StatisticsCalculator(datasets, config)
+            return calculator.compute_all()
+    
+    # MEDIUM LEVEL: dataset_builder.py
+    class DatasetBuilder:
+        def build_all(self) -> DatasetFiles:
+            """Build all enabled datasets"""
+            results = {}
+            
+            for ds_type in self.config.enabled_datasets:
+                if self._needs_building(ds_type):
+                    results[ds_type] = self._build_one(ds_type)
+                else:
+                    results[ds_type] = self._get_existing(ds_type)
+            
+            return DatasetFiles(results)
+        
+        def _build_one(self, dataset_type: str) -> str:
+            """Build single dataset"""
+            files = self.file_finder.find(dataset_type, self.config)
+            validation = self.validator.validate(files, self.config)
+            data = self.loader.load_and_process(files, validation)
+            path = self.writer.save(data, dataset_type, self.config)
+            return path
+    
+    # LOW LEVEL: file_finder.py
+    class FileFinder:
+        def find(self, dataset_type: str, config: Config) -> List[str]:
+            """Find all files matching configuration"""
+            templates = self._get_templates(dataset_type, config)
+            date_vars = self._build_date_variables(config)
+            
+            all_files = []
+            for template in templates:
+                resolved = self._resolve_template(template, date_vars)
+                matches = glob.glob(resolved)
+                all_files.extend(matches)
+            
+            return all_files
+        
+        def _resolve_template(self, template: str,
+                             date_vars: dict) -> str:
+            """Handle template syntax and date substitution"""
+            # Detailed string manipulation here
+            processed = self._handle_shift_syntax(template)
+            resolved = processed.format(**date_vars)
+            return resolved
+
+Benefits of Layered Approach
+-----------------------------
+- Can read high-level code without implementation details
+- Easy to find where to make changes
+- Each layer testable independently
+- Clear delegation of responsibilities
+- Code self-documents at each level
+- Can understand flow by reading just one layer
+- New developers can start at high level
+
+Implementation Steps
+--------------------
+1. Identify the 3-4 main phases of pipeline
+2. Create orchestrator class with high-level methods
+3. Create coordinator classes for medium-level logic
+4. Keep detailed implementation in focused classes
+5. Ensure each layer only calls its own level or level below
+6. Never skip layers (high → low without medium)
+7. Add docstrings explaining abstraction level
+
+
+================================================================================
+COMPREHENSIVE REFACTORING PLAN
+================================================================================
+
+This section provides a concrete, step-by-step plan for implementing all
+the improvements described above.
+
+Phase 1: Foundation (Weeks 1-2)
+--------------------------------
+Goal: Establish error handling and interfaces
+
+Week 1 Tasks:
+  1. Create model/exceptions.py with all exception classes
+  2. Create model/interfaces.py with ABC interfaces
+  3. Update one small module to use exceptions (e.g., GridManager)
+  4. Write unit tests for exceptions
+  5. Document exception handling patterns
+
+Week 2 Tasks:
+  6. Update dataset_processor.py to raise exceptions (not return dicts)
+  7. Update dataset_parallel_executor.py to raise exceptions
+  8. Update cli_controller.py to catch and format exceptions
+  9. Remove all status dict return patterns
+  10. Test that error messages are clear and helpful
+
+Deliverables:
+  - All code raises consistent exceptions
+  - CLI formats errors nicely
+  - No more status dict patterns
+  - All tests use pytest.raises()
+
+Phase 2: Extract Business Logic from CLI (Week 3)
+--------------------------------------------------
+Goal: Make pipeline logic testable without CLI
+
+Week 3 Tasks:
+  1. Create model/pipeline_runner.py
+  2. Extract run_pipeline() function from cli_controller.main()
+  3. Extract validate_config(), build_datasets(), run_statistics()
+  4. Update cli_controller.main() to just call run_pipeline()
+  5. Write unit tests for run_pipeline() (no CLI involved)
+  6. Write integration tests for full CLI
+
+Deliverables:
+  - Pipeline logic usable without CLI
+  - Fast unit tests for business logic
+  - CLI is thin wrapper around business logic
+
+Phase 3: Variable Registry (Week 4)
+------------------------------------
+Goal: Centralize variable metadata and calculations
+
+Week 4 Tasks:
+  1. Create model/variable_registry.py
+  2. Move calculation methods from dataset_processor to registry
+  3. Add get_scale_factor(), get_units(), etc. methods
+  4. Update dataset_processor to use registry
+  5. Add validation logic to registry __init__
+  6. Write comprehensive unit tests for registry
+  7. Optional: Create YAML config format for variables
+
+Deliverables:
+  - All variable metadata in one place
+  - Clear API for variable operations
+  - Calculation logic centralized
+  - Easy to add new variables
+
+Phase 4: Extract Components from God Class - Part 1 (Weeks 5-6)
+----------------------------------------------------------------
+Goal: Break out independent utilities from BatchDatasetProcessor
+
+Week 5 Tasks:
+  1. Create model/grid_manager.py and extract grid methods
+  2. Create model/file_resolver.py and extract template methods
+  3. Write unit tests for GridManager
+  4. Write unit tests for FileResolver
+  5. Update BatchDatasetProcessor to use new classes
+
+Week 6 Tasks:
+  6. Create model/variable_mapper.py and extract variable name methods
+  7. Create model/regrid_manager.py and extract regridding methods
+  8. Write unit tests for VariableMapper
+  9. Write unit tests for RegridManager
+  10. Update BatchDatasetProcessor to use new classes
+
+Deliverables:
+  - 4 focused classes extracted and tested
+  - BatchDatasetProcessor uses them via composition
+  - Each new class has <200 lines
+  - Comprehensive unit tests for each
+
+Phase 5: Extract Components from God Class - Part 2 (Weeks 7-8)
+----------------------------------------------------------------
+Goal: Break out data processing components
+
+Week 7 Tasks:
+  1. Create model/dataset_validator.py and extract validation methods
+  2. Create model/dataset_loader.py and extract loading methods
+  3. Write unit tests for DatasetValidator
+  4. Write unit tests for DatasetLoader
+  5. Update BatchDatasetProcessor to use new classes
+
+Week 8 Tasks:
+  6. Create model/variable_calculator.py (or update registry)
+  7. Create model/dataset_combiner.py and extract combining methods
+  8. Create model/climatology_processor.py and extract clim methods
+  9. Write unit tests for all new classes
+  10. Update BatchDatasetProcessor to use new classes
+
+Deliverables:
+  - Another 4-5 classes extracted and tested
+  - BatchDatasetProcessor down to ~500 lines
+  - Each component independently testable
+
+Phase 6: Extract Writer and Finish Extraction (Week 9)
+-------------------------------------------------------
+Goal: Complete the god class breakup
+
+Week 9 Tasks:
+  1. Create model/dataset_writer.py and extract I/O methods
+  2. Extract merge methods to writer
+  3. Write comprehensive tests for DatasetWriter
+  4. Update BatchDatasetProcessor to use DatasetWriter
+  5. Verify BatchDatasetProcessor is now <300 lines and mostly coordination
+  6. Refactor BatchDatasetProcessor to be a coordinator/facade
+  7. Update all callers to use facade pattern
+  8. Write integration tests for full dataset processing flow
+
+Deliverables:
+  - DatasetWriter handles all I/O
+  - BatchDatasetProcessor is now a thin coordinator
+  - All original functionality preserved
+  - Comprehensive test coverage
+
+Phase 7: Implement Coordinator Pattern (Week 10)
+-------------------------------------------------
+Goal: Clean up parallel executor with better abstractions
+
+Week 10 Tasks:
+  1. Create model/chunk_strategy.py for chunking logic
+  2. Create model/dataset_coordinator.py for build coordination
+  3. Implement dependency injection in coordinator
+  4. Update dataset_parallel_executor.py to use coordinator
+  5. Remove tight coupling and state manipulation
+  6. Write tests for chunk strategy
+  7. Write tests for coordinator
+  8. Verify parallel processing still works correctly
+
+Deliverables:
+  - Clean coordinator pattern for dataset building
+  - No more model = '' manipulation
+  - Clear separation of concerns
+  - Parallel processing cleaner and more maintainable
+
+Phase 8: Layer Abstractions (Week 11)
+--------------------------------------
+Goal: Organize code into clear abstraction layers
+
+Week 11 Tasks:
+  1. Create high-level PipelineOrchestrator class
+  2. Move high-level logic from current locations
+  3. Ensure each layer only calls same/lower level
+  4. Add docstrings explaining abstraction levels
+  5. Refactor any methods mixing levels
+  6. Update documentation with architecture diagram
+  7. Write integration tests verifying layers work together
+
+Deliverables:
+  - Clear 3-layer architecture
+  - High-level code readable without implementation knowledge
+  - Each layer independently understandable
+  - Architecture documented
+
+Phase 9: Polish and Documentation (Week 12)
+--------------------------------------------
+Goal: Clean up, document, and ensure quality
+
+Week 12 Tasks:
+  1. Review all new code for consistency
+  2. Add comprehensive docstrings to all public APIs
+  3. Create architecture documentation with diagrams
+  4. Write developer guide for contributing
+  5. Add type hints throughout codebase
+  6. Run linting and fix all issues
+  7. Ensure test coverage >80%
+  8. Create migration guide from old to new architecture
+  9. Update README with new structure
+  10. Tag release version
+
+Deliverables:
+  - Complete documentation
+  - High test coverage
+  - Clean, consistent codebase
+  - Clear migration path for users
+
+
+================================================================================
+PRIORITY ORDER FOR CLI-ONLY USE CASE
+================================================================================
+
+Since you only need CLI interface (not API, GUI, or notebook usage), some
+refactorings are more valuable than others.
+
+Highest Priority (Do These First)
+----------------------------------
+These provide maximum value for CLI-only usage:
+
+Priority 1: Split BatchDatasetProcessor (Issue #1)
+  Why: 2000-line god class is biggest maintenance burden
+  Impact: Makes everything else easier
+  Effort: High (8 weeks)
+  Value: Critical
+  
+Priority 2: Consistent Error Handling (Issue #4)
+  Why: Currently have 3 different error patterns
+  Impact: Much easier debugging and error messages
+  Effort: Low (2 weeks)
+  Value: High
+  
+Priority 3: Variable Registry (Issue #3)
+  Why: Centralizes variable metadata and calculations
+  Impact: Easier to add new variables and models
+  Effort: Low (1 week)
+  Value: Medium-High
+
+Medium Priority (Do After High Priority)
+-----------------------------------------
+Still valuable but less critical:
+
+Priority 4: Extract Testable Pipeline Functions (Issue #2, simplified)
+  Why: Makes business logic testable without CLI overhead
+  Impact: Better test coverage, faster tests
+  Effort: Low (1 week)
+  Value: Medium
+  Note: Simplified version - don't need full orchestrator abstraction
+  
+Priority 5: Reduce Coupling (Issue #5)
+  Why: Makes components easier to test and maintain
+  Impact: More maintainable codebase
+  Effort: Medium (3 weeks)
+  Value: Medium
+
+Lower Priority (Nice to Have)
+------------------------------
+Improves code quality but less critical:
+
+Priority 6: Clean Up Abstraction Levels (Issue #6)
+  Why: Makes code easier to read and understand
+  Impact: Better code readability
+  Effort: Medium (2 weeks)
+  Value: Low-Medium
+
+Recommended Implementation Order for CLI-Only
+----------------------------------------------
+1. Phase 1: Error Handling (Weeks 1-2) - Issue #4
+2. Phase 2: Variable Registry (Week 3) - Issue #3
+3. Phase 3: Extract Testable Functions (Week 4) - Issue #2 simplified
+4. Phase 4-6: Split God Class (Weeks 5-9) - Issue #1
+5. Phase 7: Reduce Coupling (Week 10) - Issue #5
+6. Phase 8: Abstraction Levels (Week 11) - Issue #6
+7. Phase 9: Polish (Week 12)
+
+This prioritizes quick wins (error handling, variable registry) before
+tackling the large refactoring (god class split).
+
+
+================================================================================
+TESTING STRATEGY
+================================================================================
+
+With the refactored architecture, testing becomes much easier.
+
+Unit Tests (Fast, Isolated)
+----------------------------
+Each small class can be tested independently:
+
+Test: GridManager
+  test_create_grid_valid_parameters()
+  test_create_grid_invalid_dimensions()
+  test_calculate_weights()
+  test_grid_compatibility_validation()
+
+Test: FileResolver
+  test_resolve_simple_template()
+  test_resolve_template_with_shift_syntax()
+  test_resolve_template_with_multiple_variables()
+  test_find_files_with_glob()
+  test_find_files_missing()
+
+Test: VariableMapper
+  test_normalize_variable_name()
+  test_resolve_alias_case_insensitive()
+  test_get_collection_variables()
+  test_unknown_variable_handling()
+
+Test: VariableRegistry
+  test_get_scale_factor()
+  test_get_dependencies()
+  test_calculate_d2m()
+  test_calculate_pm25()
+  test_registry_validation_catches_missing_calculator()
+
+Test: DatasetValidator
+  test_validate_variables_all_present()
+  test_validate_variables_some_missing()
+  test_validate_pressure_levels()
+  test_validate_prithvi_levels()
+
+Test: VariableCalculator
+  test_d2m_calculation()
+  test_pm25_calculation()
+  test_missing_dependency_raises_error()
+
+Test: RegridManager
+  test_regridder_caching()
+  test_regrid_variable()
+  test_conservative_normed_method()
+
+Test: DatasetLoader
+  test_load_dataset()
+  test_select_pressure_levels()
+  test_normalize_time_coordinate()
+
+Test: DatasetCombiner
+  test_combine_forecast_by_init_and_lead()
+  test_combine_analysis_by_time()
+  test_combine_climatology()
+
+Test: ClimatologyProcessor
+  test_monthly_weight_calculation()
+  test_interpolate_between_months()
+  test_month_boundary_handling()
+
+Test: DatasetWriter
+  test_generate_filename()
+  test_save_with_compression()
+  test_merge_chunks()
+
+Test: Custom Exceptions
+  test_exception_messages_formatted_correctly()
+  test_exception_attributes_accessible()
+
+Integration Tests (Slower, Multiple Components)
+------------------------------------------------
+Test components working together:
+
+Test: Dataset Building Flow
+  test_build_forecast_dataset_end_to_end()
+  test_build_analysis_dataset_end_to_end()
+  test_build_climatology_dataset_end_to_end()
+  test_build_with_existing_datasets()
+  test_build_with_calculated_variables()
+
+Test: Parallel Processing
+  test_chunk_forecast_processing()
+  test_merge_forecast_chunks()
+  test_parallel_worker_execution()
+
+Test: Pipeline Runner
+  test_run_pipeline_success()
+  test_run_pipeline_with_missing_files()
+  test_run_pipeline_with_invalid_config()
+
+End-to-End Tests (Slowest, Full System)
+----------------------------------------
+Test complete workflows with real (small) data:
+
+Test: Full Pipeline
+  test_complete_pipeline_with_test_data()
+  test_pipeline_with_existing_datasets()
+  test_pipeline_failure_handling()
+
+Test: Statistics
+  test_regional_statistics_calculation()
+  test_global_statistics_calculation()
+
+Test: CLI
+  test_cli_success_path()
+  test_cli_error_formatting()
+  test_cli_exit_codes()
+
+Mock Testing Strategy
+---------------------
+With dependency injection, mocking becomes easy:
+
+    # Test DatasetCoordinator without real file I/O
+    def test_coordinator_with_mocks():
+        mock_finder = Mock(spec=FileFinder)
+        mock_finder.find.return_value = ['file1.nc', 'file2.nc']
+        
+        mock_validator = Mock(spec=DatasetValidator)
+        mock_validator.validate.return_value = ValidationResult(valid=True)
+        
+        coordinator = DatasetCoordinator(
+            file_finder=mock_finder,
+            validator=mock_validator
+        )
+        
+        result = coordinator.build_dataset('fcst', config)
+        
+        assert mock_finder.find.called
+        assert mock_validator.validate.called
+
+Performance Testing
+-------------------
+Ensure refactoring doesn't slow down pipeline:
+
+    def test_pipeline_performance_benchmark():
+        """Ensure pipeline completes within acceptable time"""
+        start = time.time()
+        run_pipeline(test_config)
+        duration = time.time() - start
+        
+        assert duration < EXPECTED_MAX_TIME
+
+Test Coverage Goals
+-------------------
+- Unit tests: >90% coverage
+- Integration tests: All critical paths
+- E2E tests: Major workflows
+- Total coverage: >80%
+
+
+================================================================================
+BENEFITS SUMMARY
+================================================================================
+
+After completing this refactoring, you will have:
+
+Code Quality Benefits
+---------------------
+✓ Small, focused classes (<200 lines each)
+✓ Clear single responsibilities
+✓ Easy to understand what each component does
+✓ Consistent error handling throughout
+✓ Clean abstraction layers
+✓ Type-safe with type hints
+
+Development Benefits
+--------------------
+✓ Can work on components independently
+✓ Changes isolated to relevant components
+✓ New features easier to add
+✓ New developers can contribute faster
+✓ Clear architecture documentation
+
+Testing Benefits
+----------------
+✓ Fast unit tests for each component
+✓ Easy to mock dependencies
+✓ Can test business logic without CLI
+✓ Better test coverage
+✓ Easier to reproduce bugs
+
+Maintenance Benefits
+--------------------
+✓ Easier to locate bugs
+✓ Clear responsibility for each issue
+✓ Changes don't ripple unpredictably
+✓ Can refactor components independently
+✓ Well-documented codebase
+
+Debugging Benefits
+------------------
+✓ Clear exception messages with context
+✓ Stack traces preserved
+✓ Structured error information
+✓ Different exit codes for different errors
+✓ Easy to add logging
+
+
+================================================================================
+MIGRATION STRATEGY
+================================================================================
+
+How to transition from old to new architecture without breaking everything.
+
+Strategy: Parallel Implementation
+----------------------------------
+Don't replace old code immediately. Build new alongside old, then switch.
+
+Step 1: Create New Code Alongside Old
+  - Create new files (don't modify old ones yet)
+  - Implement new classes
+  - Write tests for new classes
+  - Verify tests pass
+
+Step 2: Add Adapter/Facade Layer
+  - Create adapter that wraps new code with old interface
+  - Existing code continues using old interface
+  - Adapter translates to new code
+  
+    # adapter.py
+    class BatchDatasetProcessorAdapter:
+        """Adapter that wraps new architecture with old interface"""
+        def __init__(self, config):
+            # Create new components
+            self.grid_manager = GridManager()
+            self.file_resolver = FileResolver()
+            # etc.
+        
+        def process_batch(self, **kwargs):
+            """Old interface method delegates to new architecture"""
+            # Translate old kwargs to new API
+            # Call new code
+            # Translate results back to old format
+            return old_format_result
+
+Step 3: Switch One Module at a Time
+  - Update one caller to use new code directly
+  - Test thoroughly
+  - If problems, easy to roll back
+  - Once stable, update next caller
+
+Step 4: Remove Adapter and Old Code
+  - Once all callers updated, remove adapter
+  - Remove old code
+  - Clean up
+
+Example Migration for GridManager:
+
+    # Week 1: Create new GridManager
+    # model/grid_manager.py created with tests
+    
+    # Week 2: Keep old code, add wrapper
+    class BatchDatasetProcessor:
+        def _create_target_grid(self):
+            # OLD CODE STILL HERE
+            # But add this:
+            if USE_NEW_GRID_MANAGER:
+                manager = GridManager()
+                return manager.create_grid(...)
+            # else: old code
+    
+    # Week 3: Test with flag enabled
+    USE_NEW_GRID_MANAGER = True  # Test thoroughly
+    
+    # Week 4: Remove old code
+    class BatchDatasetProcessor:
+        def _create_target_grid(self):
+            manager = GridManager()
+            return manager.create_grid(...)
+
+Benefits of This Approach
+--------------------------
+- No big bang switchover
+- Easy to roll back if issues
+- Can test new code in production incrementally
+- Old code works while developing new
+- Reduces risk significantly
+
+Rollback Plan
+-------------
+If problems occur with new code:
+1. Set USE_NEW_CODE flag to False
+2. Old code path activates immediately
+3. Debug new code without time pressure
+4. Fix and try again
+
+Version Control Strategy
+-------------------------
+- Create feature branch for refactoring
+- Merge small PRs regularly (per component)
+- Each PR independently reviewable
+- Main branch stays stable
+
+
+================================================================================
+COMMON PITFALLS TO AVOID
+================================================================================
+
+Based on refactoring experience, watch out for:
+
+Pitfall 1: Trying to Do Everything at Once
+-------------------------------------------
+Problem: Start refactoring multiple areas simultaneously
+Result: Large unfinished changes, nothing working
+Solution: Complete one component fully before starting next
+
+Pitfall 2: Not Writing Tests First
+-----------------------------------
+Problem: Refactor without test coverage
+Result: Break functionality without noticing
+Solution: Write tests for existing behavior before refactoring
+
+Pitfall 3: Changing Behavior While Refactoring
+-----------------------------------------------
+Problem: "While I'm here, let me also fix/improve..."
+Result: Can't tell if new bugs are from refactoring or changes
+Solution: Refactoring = same behavior, different structure. No new features.
+
+Pitfall 4: Making Classes Too Generic
+--------------------------------------
+Problem: "What if we need this for other use cases..."
+Result: Overly complex, hard to use
+Solution: Solve current problem simply. Refactor later if needed.
+
+Pitfall 5: Not Communicating Changes
+-------------------------------------
+Problem: Surprise other developers with big changes
+Result: Merge conflicts, confusion, frustration
+Solution: Communicate plan, get feedback, coordinate
+
+Pitfall 6: Skipping Documentation
+----------------------------------
+Problem: "Code is self-documenting"
+Result: Six months later, nobody understands architecture
+Solution: Document architecture decisions as you go
+
+Pitfall 7: Perfectionism
+-------------------------
+Problem: "Just one more improvement before merging..."
+Result: Never finish, branches get stale
+Solution: Good enough is good enough. Merge and iterate.
+
+
+================================================================================
+RECOMMENDED READING
+================================================================================
+
+Books and resources that influenced these recommendations:
+
+Books
+-----
+- "Refactoring" by Martin Fowler
+  Chapter 3: Bad Smells in Code (Long Method, Large Class)
+  Chapter 6: Extract Class, Extract Method
+
+- "Clean Code" by Robert Martin
+  Chapter 3: Functions (Small! Do One Thing)
+  Chapter 10: Classes (Single Responsibility Principle)
+
+- "Working Effectively with Legacy Code" by Michael Feathers
+  Chapter 20: This Class is Too Big and I Don't Want It to Get Any Bigger
+  Chapter 25: Dependency-Breaking Techniques
+
+Patterns
+--------
+- Facade Pattern: For BatchDatasetProcessor after refactoring
+- Strategy Pattern: For ChunkStrategy
+- Factory Pattern: For creating processors
+- Dependency Injection: Throughout for testing
+
+Principles
+----------
+- Single Responsibility Principle (SRP)
+  Each class should have one reason to change
+
+- Open/Closed Principle (OCP)
+  Open for extension, closed for modification
+
+- Dependency Inversion Principle (DIP)
+  Depend on abstractions, not concretions
+
+- Interface Segregation Principle (ISP)
+  Many specific interfaces better than one general
+
+
+================================================================================
+CONCLUSION
+================================================================================
+
+Current State
+-------------
+The weather modeling stats pipeline works but has significant code quality
+issues:
+- 2000-line god class doing everything
+- Business logic mixed with CLI
+- Scattered constants and calculations
+- Three different error handling patterns
+- Tight coupling between components
+- Mixed abstraction levels
+
+These issues make the codebase:
+- Hard to maintain
+- Difficult to test
+- Risky to change
+- Challenging for new contributors
+
+Proposed Solution
+-----------------
+Systematic refactoring following best practices:
+1. Consistent error handling with custom exceptions
+2. Centralized variable registry
+3. Extract testable business logic from CLI
+4. Split god class into 11 focused components
+5. Dependency injection to reduce coupling
+6. Clear abstraction layers
+
+Implementation Plan
+-------------------
+12-week phased approach with clear deliverables:
+- Quick wins first (error handling, variable registry)
+- Incremental god class breakup
+- Parallel implementation strategy (low risk)
+- Comprehensive testing at each step
+
+Expected Outcome
+----------------
+After refactoring:
+- Maintainable codebase with clear structure
+- Fast, comprehensive test suite
+- Easy to add new variables, models, features
+- New developers can contribute quickly
+- Well-documented architecture
+- Same functionality, better code quality
+
+For CLI-Only Use Case
+---------------------
+Simplified priorities:
+1. Error handling (2 weeks)
+2. Variable registry (1 week)
+3. Testable functions (1 week)
+4. Split god class (5 weeks)
+5. Reduce coupling (1 week)
+6. Abstraction levels (1 week)
+7. Polish (1 week)
+
+Total: 12 weeks to world-class code quality
+
+Next Steps
+----------
+1. Review this document with team
+2. Decide which phases to implement
+3. Create tracking issues for each phase
+4. Start with Phase 1 (error handling)
+5. Iterate and improve
+
+
+================================================================================
+APPENDIX: QUICK REFERENCE
+================================================================================
+
+File Structure After Refactoring
+---------------------------------
+model/
+├── exceptions.py           # Custom exception classes
+├── interfaces.py           # ABC interfaces
+├── variable_registry.py    # Variable metadata and calculations
+├── grid_manager.py         # Grid creation and weights
+├── file_resolver.py        # Template resolution and file discovery
+├── variable_mapper.py      # Variable name normalization and aliases
+├── regrid_manager.py       # Regridding operations
+├── dataset_validator.py    # Dataset validation logic
+├── dataset_loader.py       # Load datasets from files
+├── variable_calculator.py  # Calculate derived variables
+├── dataset_combiner.py     # Combine datasets into structures
+├── climatology_processor.py # Monthly interpolation
+├── dataset_writer.py       # Save datasets to NetCDF
+├── dataset_builder.py      # Coordinate dataset building
+├── chunk_strategy.py       # Chunking logic
+├── dataset_coordinator.py  # Build coordination with DI
+├── pipeline_runner.py      # Business logic for pipeline
+├── dataset_parallel_executor.py # Parallel execution (refactored)
+├── dataset_processor.py    # Facade (much smaller)
+└── statistics_processor.py # Statistics calculations
+
+controller/
+└── cli_controller.py       # CLI only (thin wrapper)
+
+Class Responsibilities Quick Reference
+---------------------------------------
+GridManager: Grid creation, weights
+FileResolver: Find files from templates
+VariableMapper: Normalize names, resolve aliases
+RegridManager: Regridding with caching
+VariableCalculator: Calculate derived variables
+VariableRegistry: Variable metadata API
+DatasetValidator: Validate dataset contents
+DatasetLoader: Load and prepare datasets
+DatasetCombiner: Merge into structured arrays
+ClimatologyProcessor: Monthly interpolation
+DatasetWriter: Save to NetCDF with compression
+DatasetBuilder: Coordinate dataset building
+ChunkStrategy: Determine chunking approach
+DatasetCoordinator: Orchestrate with DI
+PipelineRunner: Business logic entry point
+
+Key Patterns Used
+-----------------
+Facade: BatchDatasetProcessor after refactoring
+Strategy: ChunkStrategy for chunking logic
+Factory: Create processors based on type
+Dependency Injection: Throughout for testability
+Single Responsibility: Each class does one thing
+Interface Segregation: Focused interfaces
+
+Testing Approach
+----------------
+Unit: Test each component isolated (>90% coverage)
+Integration: Test components together (all paths)
+E2E: Test full workflows (major scenarios)
+Mocking: Use for unit tests with DI
+
+Error Handling
+--------------
+Always raise custom exceptions from business logic
+Catch and format at CLI boundary
+Include context in exception objects
+Use different exit codes for different errors
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================

@@ -109,6 +109,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
 
     chunk_results = []
     built_fcst_this_run = False
+    existing_fcst_path = None
     if process_fcst and _forecast_needs_processing(config_path, info_dir,
                                                    single_fcst_mode):
         spacing = base_processor.config.get('fcst_spacing', 1)
@@ -185,6 +186,12 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
     elif process_fcst:
         print('[INFO] Forecast dataset already valid; skipping forecast '
               'chunk processing')
+        # Get the existing forecast path
+        temp_processor = BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode)
+        temp_processor.ana_model = ''
+        temp_processor.clim_model = ''
+        existing_datasets_check = temp_processor._check_for_existing_datasets()
+        existing_fcst_path = existing_datasets_check.get('fcst')
 
     followup_processor = BatchDatasetProcessor.from_yaml(config_path,
                                                          single_fcst_mode)
@@ -218,6 +225,8 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
     if built_fcst_this_run:
         dataset_files['fcst'] = os.path.join(
             'outputs', base_processor._generate_output_filenm('fcst'))
+    elif existing_fcst_path:  # Use the path we captured earlier
+        dataset_files['fcst'] = existing_fcst_path
 
     return {
         'status': 'success',
