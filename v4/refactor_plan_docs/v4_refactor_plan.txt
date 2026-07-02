@@ -28,39 +28,32 @@
   - Write chunk outputs with expected deterministic names.
   - Merge statistics chunks automatically only after all required chunks finish successfully or are explicitly skipped.
 
-7. Parallelize analysis and climatology dataset creation in Python (Estimated LOC: 180-420)
-  - Extend source dataset parallelism beyond forecast chunks.
-  - Split analysis dataset processing by deterministic valid-time chunks.
-  - Split climatology dataset processing by deterministic valid-time or cycle chunks.
-  - Merge ana and clim chunk outputs in chunk-plan order, with validation before cleanup.
-  - Keep final ana and clim dataset filenames unchanged.
-
-8. Strengthen regional and global branch independence (Estimated LOC: 100-220)
+7. Strengthen regional and global branch independence (Estimated LOC: 100-220)
   - Keep regional and global stats as separate branches using the same fcst, ana, and clim inputs.
   - Record separate branch status, errors, outputs, and logs.
   - Allow one branch to fail without preventing the other from completing when fail policy permits.
 
-9. Add restart and resume support (Estimated LOC: 160-360)
+8. Add restart and resume support (Estimated LOC: 160-360)
   - Track stage, branch, and chunk completion.
   - On rerun, skip completed good outputs and continue from the first incomplete point.
   - Avoid redoing expensive steps unless required.
 
-10. Improve logs and run summary (Estimated LOC: 80-180)
+9. Improve logs and run summary (Estimated LOC: 80-180)
   - Add simple, readable stage and chunk progress messages.
   - Include timing summaries and counts of completed, skipped, and failed chunks.
   - End with a concise final summary.
 
-11. Extend resource-aware worker controls (Estimated LOC: 60-140)
+10. Extend resource-aware worker controls (Estimated LOC: 60-140)
   - Apply SLURM_CPUS_PER_TASK and configured limits consistently to dataset, statistics, and branch workers.
   - Cap workers conservatively to avoid memory blowups.
   - Keep defaults safe for Discover node sizes.
 
-12. Validate old vs new behavior with a small test (Estimated LOC: 100-240)
+11. Validate old vs new behavior with a small test (Estimated LOC: 100-240)
   - Use a small date range.
   - Run old flow and new flow separately.
   - Compare file presence, shapes and dimensions, and key stat values.
   - Goal: prove the refactor changed compute strategy, not scientific results.
 
-13. Remove old multi-job assumptions (Estimated LOC: 80-220)
+12. Remove old multi-job assumptions (Estimated LOC: 80-220)
   - Delete or isolate legacy code that expects SLURM dependency chains.
   - Update docs and help text so single job plus in-process parallelism is the official model.
