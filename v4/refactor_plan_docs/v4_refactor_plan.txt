@@ -22,7 +22,7 @@
   - Define merge order from the chunk plan, not from worker completion order or filename glob order.
   - Define required vs skipped chunks and the minimum validation needed before merge and cleanup.
 
-6. Parallelize statistics calculation in Python (Estimated LOC: 200-420) [Small validation succeeded; larger validation in progress]
+6. Parallelize statistics calculation in Python (Estimated LOC: 200-420) [Completed]
   - Use the deterministic chunk plan to split regional and global statistics by init_dates.
   - Run statistics chunks with ProcessPoolExecutor inside the single pipeline job.
   - Write chunk outputs with expected deterministic names.
