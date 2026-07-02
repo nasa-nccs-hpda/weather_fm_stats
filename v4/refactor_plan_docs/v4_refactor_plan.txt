@@ -48,6 +48,7 @@
 10. Improve logs and run summary (Estimated LOC: 80-180)
   - Add simple, readable stage and chunk progress messages.
   - Include timing summaries and counts of completed, skipped, and failed chunks.
+  - Record pipeline start time, finish time, and elapsed wall time in logs and run_summary.txt.
   - End with a concise final summary.
 
 11. Extend resource-aware worker controls (Estimated LOC: 60-140)
