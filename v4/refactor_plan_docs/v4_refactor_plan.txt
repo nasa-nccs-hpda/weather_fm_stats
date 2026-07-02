@@ -15,7 +15,7 @@
   - Start with forecast chunk processing (biggest win), then collection-level parallel work.
   - Add clear wait points before merge stages.
 
-5. Make init-date chunk planning and merge contracts deterministic (Estimated LOC: 120-260)
+5. Make init-date chunk planning and merge contracts deterministic (Estimated LOC: 120-260) [Completed]
   - Define one chunk plan format for forecast dataset chunks and future statistics chunks.
   - Each chunk must have a stable chunk index, inclusive start/end indices, selected init_dates, empty/skipped status, and expected output name.
   - Build chunk ranges from the full configured init-date sequence; record exclusions inside each chunk so skipped chunks are explicit.

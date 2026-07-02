@@ -1,7 +1,7 @@
 Step 5: Make Init-Date Chunk Planning And Merge Contracts Deterministic
 
 Status
-- Implemented locally; pending Discover validation.
+- Completed.
 
 Original Plan
 - This step replaces the earlier direct jump into statistics parallelism.
@@ -88,18 +88,12 @@ Actual Files Changed
 
 Validation Notes
 - Not run locally.
-- Validation should be performed on Discover by running a small forecast-processing pipeline case.
-- Recommended checks:
-  - chunk_plan_fcst.json is written under outputs/<info_dir>/tmp.
-  - chunk records are ordered by chunk_index.
-  - excluded-date-only chunks are marked skipped.
-  - required chunks produce the expected output paths.
-  - forecast merge fails if a required chunk file is missing.
-  - forecast merge deletes only expected required chunk files after successful validation.
-  - manual --merge_forecast_chunks still works without a chunk plan.
-  - Stage 2 reports fcst, ana, and clim dataset paths with usable paths for statistics.
-  - Newly created ana/clim paths include the outputs/ prefix.
-  - Existing datasets found through dir_loc keep their original discovered paths.
+- Validated on Discover with the small AIFS/ERA5 five-day T/T2m YAML case.
+- The pipeline ran through after the final dataset path-resolution fix.
+- Confirmed behavior from Discover testing:
+  - forecast chunk planning and plan-aware forecast merge ran successfully
+  - Stage 2 returned usable fcst, ana, and clim paths for statistics
+  - newly created ana/clim paths needed the outputs/ prefix and now resolve correctly
 
 Known Limits After This Step
 - Statistics chunking is not implemented yet.

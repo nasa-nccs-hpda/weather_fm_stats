@@ -1,0 +1,62 @@
+Step 6: Parallelize Statistics Calculation In Python
+
+Status
+- Planned.
+
+Original Plan
+- Use the deterministic chunk plan to split regional and global statistics by init_dates.
+- Run statistics chunks with ProcessPoolExecutor inside the single pipeline job.
+- Write chunk outputs with expected deterministic names.
+- Merge statistics chunks automatically only after all required chunks finish successfully or are explicitly skipped.
+
+Planned Work
+- Reuse the Step 5 init-date chunk planner for statistics chunks.
+- Add statistics-specific runtime settings only if needed, such as:
+  - pipeline_chunk_size_stats
+  - pipeline_max_workers_stats
+- For each requested statistics branch:
+  - build the stats chunk plan from the same init_dates used by Stage 2
+  - skip chunks with no selected init_dates
+  - run required chunks in local worker processes
+  - write deterministic chunk output files
+  - sort chunk results by chunk_index
+  - merge only expected required chunks after all required chunks complete
+- Preserve the existing manual stats chunk behavior for debugging where practical.
+- Keep regional and global branch behavior consistent with the Step 1 failure policy.
+
+Out Of Scope For This Step
+- Do not make regional and global branches run concurrently unless it falls out naturally and safely.
+- Do not implement full restart/resume checkpointing.
+- Do not redesign all statistics calculations.
+- Do not remove legacy manual stats chunk commands yet.
+- Do not implement deep old-vs-new scientific validation; that remains a later step.
+
+Planned Files To Inspect Or Touch
+- model/chunk_plan.py
+- model/statistics_processor.py
+- controller/cli_controller.py
+- model/config_model.py
+- possibly a new model/statistics_parallel_executor.py if keeping orchestration separate is cleaner
+- refactor_plan_docs/step_docs/step_06_parallel_statistics_calculation.txt
+
+Planned Acceptance Criteria
+- Pipeline statistics can run by init-date chunks for regional stats.
+- Pipeline statistics can run by init-date chunks for global stats.
+- Stats chunk output filenames are deterministic and tied to chunk_index or chunk metadata.
+- Stats chunk results are reported in deterministic chunk_index order.
+- Stats merge consumes expected chunk files from the chunk plan, not arbitrary glob order.
+- A missing required stats chunk fails the branch before cleanup.
+- Skipped chunks are explicit and do not block merge.
+- Final regional/global statistics outputs match the existing non-chunked output naming convention.
+
+Actual Implementation
+- Pending.
+
+Actual Files Changed
+- Pending.
+
+Validation Notes
+- Pending. Validation should be performed on Discover with a small date range before trying the full May case.
+
+Known Limits After This Step
+- Pending.
