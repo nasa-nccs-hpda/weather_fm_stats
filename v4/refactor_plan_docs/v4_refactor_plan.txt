@@ -15,36 +15,43 @@
   - Start with forecast chunk processing (biggest win), then collection-level parallel work.
   - Add clear wait points before merge stages.
 
-5. Make merges safe and deterministic (Estimated LOC: 80-180)
+5. Parallelize statistics calculation in Python (Estimated LOC: 200-400)
+  - Move statistics chunking from manual SLURM arrays into local worker processes.
+  - Chunk by init_dates for both regional and global statistics.
+  - Use ProcessPoolExecutor to run chunks in parallel.
+  - Merge statistics chunks automatically after all complete.
+  - Validate merged outputs before deleting chunk files.
+
+6. Make merges safe and deterministic (Estimated LOC: 80-180)
   - Merge only after all required chunk tasks finish.
   - Validate merged outputs before deleting chunk and temp files.
   - Keep naming consistent and predictable.
 
-6. Split regional and global stats into independent branches (Estimated LOC: 120-260)
+7. Split regional and global stats into independent branches (Estimated LOC: 120-260)
   - Use the same built source datasets (fcst, ana, clim) as inputs.
   - Run regional and global stats separately (parallel if resources allow).
   - Write separate output files and separate status logs.
 
-7. Add restart and resume support (Estimated LOC: 160-360)
+8. Add restart and resume support (Estimated LOC: 160-360)
   - Track stage and chunk completion.
   - On rerun, skip completed good outputs and continue from the first incomplete point.
   - Avoid redoing expensive steps unless required.
 
-8. Improve logs and run summary (Estimated LOC: 80-180)
+9. Improve logs and run summary (Estimated LOC: 80-180)
   - Add simple, readable stage and chunk progress messages.
   - Include timing summaries and counts of completed, skipped, and failed chunks.
   - End with a concise final summary.
 
-9. Make worker counts resource-aware (Estimated LOC: 40-100)
+10. Make worker counts resource-aware (Estimated LOC: 40-100)
   - Read SLURM_CPUS_PER_TASK and combine with configured limits.
   - Cap workers conservatively to avoid memory blowups.
 
-10. Validate old vs new behavior with a small test (Estimated LOC: 100-240)
+11. Validate old vs new behavior with a small test (Estimated LOC: 100-240)
   - Use a small date range.
   - Run old flow and new flow separately.
   - Compare file presence, shapes and dimensions, and key stat values.
   - Goal: prove the refactor changed compute strategy, not scientific results.
 
-11. Remove old multi-job assumptions (Estimated LOC: 80-220)
+12. Remove old multi-job assumptions (Estimated LOC: 80-220)
   - Delete or isolate legacy code that expects SLURM dependency chains.
   - Update docs and help text so single job plus in-process parallelism is the official model.
