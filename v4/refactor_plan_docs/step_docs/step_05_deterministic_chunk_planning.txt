@@ -76,6 +76,9 @@ Actual Implementation
 - Forecast merge now fails if an expected required chunk file is missing.
 - Forecast merge keeps the old glob-based behavior when no chunk plan is supplied, preserving manual --merge_forecast_chunks debugging.
 - Forecast merge validates the merged forecast file before deleting expected chunk files.
+- Fixed Stage 2 dataset path resolution for fcst, ana, and clim.
+- Added shared final dataset path resolution so existing validated datasets keep their original paths, while newly saved datasets resolve to outputs/<generated_filename>.
+- Removed forecast-only final path patching in favor of one rule for all three source datasets.
 
 Actual Files Changed
 - model/chunk_plan.py
@@ -94,6 +97,9 @@ Validation Notes
   - forecast merge fails if a required chunk file is missing.
   - forecast merge deletes only expected required chunk files after successful validation.
   - manual --merge_forecast_chunks still works without a chunk plan.
+  - Stage 2 reports fcst, ana, and clim dataset paths with usable paths for statistics.
+  - Newly created ana/clim paths include the outputs/ prefix.
+  - Existing datasets found through dir_loc keep their original discovered paths.
 
 Known Limits After This Step
 - Statistics chunking is not implemented yet.

@@ -95,6 +95,22 @@ def _chunk_result_from_spec(chunk_spec, status=None, error=None):
     return result
 
 
+def _resolve_final_dataset_files(processor, results, dataset_types):
+    '''Resolve usable final dataset paths for existing and newly saved files.'''
+    dataset_files = {}
+    existing_datasets = results.get('existing_datasets', {})
+    new_datasets = results.get('datasets', {})
+
+    for dataset_type in dataset_types:
+        if dataset_type in existing_datasets:
+            dataset_files[dataset_type] = existing_datasets[dataset_type]
+        elif dataset_type in new_datasets:
+            dataset_files[dataset_type] = os.path.join(
+                'outputs', processor._generate_output_filenm(dataset_type))
+
+    return dataset_files
+
+
 def _forecast_needs_processing(config_path, info_dir, single_fcst_mode):
     '''Check whether forecast dataset creation is required.'''
     checker = BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode)
@@ -122,8 +138,10 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                         base_processor.fcst_model.strip())
 
     chunk_results = []
-    built_fcst_this_run = False
-    existing_fcst_path = None
+    forecast_results = {
+        'existing_datasets': {},
+        'datasets': {},
+    }
     if process_fcst and _forecast_needs_processing(config_path, info_dir,
                                                    single_fcst_mode):
         spacing = base_processor.config.get('fcst_spacing', 1)
@@ -245,16 +263,18 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                 'reason': 'forecast_chunk_merge_failed',
                 'chunk_results': chunk_results,
             }
-        built_fcst_this_run = True
+        forecast_results['datasets']['fcst'] = True
     elif process_fcst:
         print('[INFO] Forecast dataset already valid; skipping forecast '
               'chunk processing')
-        # Get the existing forecast path
-        temp_processor = BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode)
+        temp_processor = BatchDatasetProcessor.from_yaml(config_path,
+                                                         single_fcst_mode)
         temp_processor.ana_model = ''
         temp_processor.clim_model = ''
         existing_datasets_check = temp_processor._check_for_existing_datasets()
-        existing_fcst_path = existing_datasets_check.get('fcst')
+        if existing_datasets_check.get('fcst'):
+            forecast_results['existing_datasets']['fcst'] = (
+                existing_datasets_check['fcst'])
 
     followup_processor = BatchDatasetProcessor.from_yaml(config_path,
                                                          single_fcst_mode)
@@ -284,12 +304,11 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         skip_calc_mode=False,
     )
 
-    dataset_files = dict(followup_results.get('dataset_files', {}))
-    if built_fcst_this_run:
-        dataset_files['fcst'] = os.path.join(
-            'outputs', base_processor._generate_output_filenm('fcst'))
-    elif existing_fcst_path:  # Use the path we captured earlier
-        dataset_files['fcst'] = existing_fcst_path
+    dataset_files = {}
+    dataset_files.update(_resolve_final_dataset_files(
+        base_processor, forecast_results, ['fcst']))
+    dataset_files.update(_resolve_final_dataset_files(
+        followup_processor, followup_results, ['ana', 'clim']))
 
     return {
         'status': 'success',
