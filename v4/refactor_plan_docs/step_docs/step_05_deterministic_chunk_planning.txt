@@ -1,0 +1,67 @@
+Step 5: Make Init-Date Chunk Planning And Merge Contracts Deterministic
+
+Status
+- Planned.
+
+Original Plan
+- This step replaces the earlier direct jump into statistics parallelism.
+- The goal is to define deterministic chunk and merge behavior before adding more chunked processing.
+
+Planned Work
+- Create one clear chunk planning approach for:
+  - existing forecast dataset chunks in pipeline Stage 2
+  - future regional/global statistics chunks in pipeline Stage 3
+- Define a chunk as an init-date range with explicit metadata:
+  - chunk_index
+  - inclusive start_idx and end_idx against the full configured init-date sequence
+  - selected init_dates after exclusions are applied
+  - empty/skipped status when all dates in the range are excluded
+  - expected output filename or filename stem
+- Build chunk ranges from the full configured init-date sequence before exclusions.
+- Apply exclusions inside each chunk and record the resulting selected dates.
+- Preserve empty chunks as explicit skipped chunks instead of silently losing them.
+- Make chunk output names deterministic from chunk metadata, not from worker completion order.
+- Make chunk result ordering deterministic by chunk_index.
+- Define the merge contract that forecast and future statistics chunking must follow:
+  - merge only chunks expected by the chunk plan
+  - merge in chunk_index/init-date order
+  - treat skipped chunks as complete only when explicitly marked skipped
+  - fail the merge if a required chunk output is missing
+  - perform minimum output validation before cleanup
+  - do not use filename glob order as the source of truth
+- Keep cleanup conservative until merged output validation is strong enough.
+
+Out Of Scope For This Step
+- Do not implement statistics parallelism yet.
+- Do not redesign all dataset processing abstractions.
+- Do not implement full restart/resume checkpointing.
+- Do not implement deep scientific validation of merged statistics values.
+- Do not add aggressive cleanup behavior; define the cleanup rules first and keep deletion conservative.
+
+Planned Files To Inspect Or Touch
+- model/dataset_parallel_executor.py
+- model/dataset_processor.py
+- controller/cli_controller.py
+- model/config_model.py, only if a new chunk setting is genuinely needed
+- refactor_plan_docs/v4_refactor_plan.txt
+
+Planned Acceptance Criteria
+- Forecast dataset chunk planning has stable chunk indices and expected output names.
+- Empty chunks caused by excluded dates are represented as skipped chunks.
+- Chunk results are reported in deterministic chunk_index order.
+- Forecast merging can be described from the chunk plan: expected files, skipped chunks, and merge order are explicit.
+- Missing required chunk outputs fail before merge or cleanup.
+- The planned chunk metadata is sufficient for future statistics chunking.
+- Existing manual chunk and merge commands remain available for debugging.
+
+Actual Implementation
+- Pending.
+
+Actual Files Changed
+- Pending.
+
+Validation Notes
+- Pending. Validation will be performed on Discover by the user unless explicitly requested otherwise.
+
+Known Limits After This Step
+- Pending.

@@ -1,0 +1,79 @@
+Step 4: Parallelize Source Dataset Creation In Python
+
+Status
+- Completed for forecast chunk parallelism.
+- Not fully completed for collection-level parallelism.
+
+Original Plan
+- Move heavy parallel work from SLURM job arrays into local worker processes.
+- Start with forecast chunk processing, the biggest expected win.
+- Then consider collection-level parallel work.
+- Add clear wait points before merge stages.
+
+Primary History
+- 7260912 updating v4 parallel dataset processing
+- 261d579 updating shell script to run on HPC
+- 992e707 adding some debugging to stage 2 dataset return paths
+- 037385e adding step 4 testing feedback from Chat, incl. refactor plan
+- 1f35f22 adding bugfix for fcst ds not found, future refactor suggestions
+- c0d5db6 completing step 4 of v4 refactor plan
+
+Planned Work
+- Replace manual multi-job forecast dataset chunking with Python-managed local worker processes inside one pipeline job.
+- Chunk forecast processing by init-date index ranges.
+- Run forecast chunks concurrently.
+- Wait for all forecast chunks to complete before merging.
+- Merge forecast chunks before downstream ana/clim processing and statistics.
+- Preserve manual/debug chunk and merge commands.
+
+Actual Work Completed
+- Added model/dataset_parallel_executor.py.
+- Added _build_chunk_ranges(total_dates, chunk_size).
+- Added _resolve_dataset_workers(runtime_settings, num_chunks).
+- Added _run_fcst_chunk_worker(...).
+- Added _forecast_needs_processing(...).
+- Added run_parallel_source_dataset_build(...).
+- Integrated run_parallel_source_dataset_build(...) into pipeline Stage 2.
+- Added ProcessPoolExecutor-based forecast chunk execution.
+- Added sequential fallback when resolved worker count is 1.
+- Added chunk failure collection and Stage 2 failure reporting.
+- Added forecast chunk merge barrier through BatchDatasetProcessor.merge_forecast_chunks(...).
+- Added pipeline_max_workers_dataset and pipeline_chunk_size_fcst runtime settings.
+- Added worker count detection using SLURM_CPUS_PER_TASK, falling back to os.cpu_count().
+- Added output of resolved dataset worker and forecast chunk size settings in the runtime contract.
+- Preserved the manual --merge_forecast_chunks command.
+
+Follow-Up Fixes And Stabilization
+- Added Stage 2 debug output for returned dataset files.
+- Added example YAML file stats_AIFS_ERA5_MAY_2024.yaml.
+- Fixed cached forecast handling in run_parallel_source_dataset_build(...):
+  - When forecast was already valid and skipped, the executor now captures the existing forecast path.
+  - This prevents Stage 3 from receiving a missing or None fcst path.
+- Added notes in refactor_plan_docs/v4_step_4_refactor_7_1_26.txt explaining the cached forecast bug and a possible future DatasetBuilder/ChunkStrategy/DatasetCoordinator design.
+- Updated run scripts during later cleanup so the wrapper scripts target the current v4 entrypoint.
+
+Files Involved
+- controller/cli_controller.py
+- model/config_model.py
+- model/dataset_parallel_executor.py
+- model/dataset_processor.py
+- model/statistics_processor.py
+- stats_AIFS_ERA5_MAY_2024.yaml
+- sbatch_stats_v4.run
+- salloc_stats_v4.run
+- refactor_plan_docs/v4_step_4_refactor_7_1_26.txt
+- refactor_plan_docs/v4_refactor_plan.txt
+
+Known Limits
+- Forecast is the only source dataset currently parallelized.
+- Ana and clim are still processed as follow-up work after forecast processing.
+- Collection-level parallelism was planned but does not appear to be implemented.
+- The executor still uses implicit state changes such as setting model names to empty strings to disable dataset types.
+- Chunk result order is based on completion order when ProcessPoolExecutor uses as_completed(...), so future deterministic chunk planning should not rely on that list order.
+- Forecast chunk merge currently discovers files from the tmp directory and sorts filenames; future work should make expected chunk identity explicit before merge and cleanup.
+- Merged output validation before deleting chunk files is still limited.
+
+Notes For Future Steps
+- The next refactor should make chunk planning deterministic and reusable before adding statistics chunking.
+- A shared chunk plan should cover chunk index, start/end indices, selected init dates, expected output path, and expected completion state.
+- Statistics chunking should not duplicate the forecast-specific chunk assumptions currently embedded in dataset_parallel_executor.py.

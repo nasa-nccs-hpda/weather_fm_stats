@@ -125,7 +125,7 @@ echo "cd ${work_dir}" >> $pipeline_script
 echo "" >> $pipeline_script
 
 # Run one v4 orchestrator command.
-echo "python -u ${work_dir}/stats_trimmed_v4.py --config ${versioned_yaml} --pipeline --stats_types ${stats_types} --info_dir ${sts_dir}" >> $pipeline_script
+echo "python -u ${work_dir}/stats_v4.py --config ${versioned_yaml} --pipeline --stats_types ${stats_types} --info_dir ${sts_dir}" >> $pipeline_script
 
 if ($generate_only) then
     echo ""
@@ -146,5 +146,4 @@ echo "Submitted single v4 pipeline job successfully."
 echo "Job ID: $pipeline_job_id"
 echo "Job script: $pipeline_script"
 echo "Log file: ${log_dir}/stats_v4_pipeline.${pipeline_job_id}.out"
-
 

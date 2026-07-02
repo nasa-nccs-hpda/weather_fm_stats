@@ -1,0 +1,52 @@
+Step 3: Centralize Runtime Settings
+
+Status
+- Completed, with some later expansion during Step 4.
+
+Original Plan
+- Put worker counts, chunk sizes, and resume behavior in one place: YAML plus CLI overrides.
+- Keep defaults safe for the node size.
+
+Primary History
+- 2d975ab adding v4 files
+- 7260912 updating v4 parallel dataset processing
+
+Planned Work
+- Add a single settings resolution path for pipeline behavior.
+- Make CLI values override YAML values.
+- Make YAML values override hard-coded defaults.
+- Validate user-provided values early during preflight.
+- Prepare the pipeline for later worker and chunk controls.
+
+Actual Work Completed
+- Added RuntimeSettings in model/config_model.py.
+- Added resolve_runtime_settings(args, config).
+- Implemented CLI > YAML > default precedence.
+- Added validation for allowed values.
+- Added startup printing of the resolved runtime contract in controller/cli_controller.py.
+
+Settings Added In Initial v4 Import
+- stats_types
+- pipeline_fail_policy
+- pipeline_branch_execution
+- pipeline_resume_mode
+- pipeline_summary_file
+
+Settings Added During Step 4
+- pipeline_max_workers_dataset
+- pipeline_chunk_size_fcst
+
+Files Involved
+- model/config_model.py
+- controller/cli_controller.py
+- refactor_plan_docs/step1_behavior_contract.txt
+- refactor_plan_docs/v4_refactor_plan.txt
+
+Known Limits
+- Runtime settings are centralized for current pipeline controls, but statistics-specific worker and chunk settings do not exist yet.
+- pipeline_resume_mode is resolved and printed, but full resume/checkpoint behavior is not implemented.
+- Resource awareness was partially implemented during Step 4 through SLURM_CPUS_PER_TASK for dataset workers, even though the current plan still lists broader resource-aware worker counts as a later step.
+
+Notes For Future Steps
+- New settings for deterministic chunk planning and statistics chunking should be added through RuntimeSettings instead of being scattered through controller or processor code.
+- Avoid adding stage-specific CLI knobs until their behavior is clearly defined in the relevant step document.

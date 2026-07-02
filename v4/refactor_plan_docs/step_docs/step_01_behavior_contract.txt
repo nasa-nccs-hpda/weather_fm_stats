@@ -1,0 +1,52 @@
+Step 1: Lock Down Expected Behavior First
+
+Status
+- Completed.
+
+Original Plan
+- Confirm pipeline order: build source datasets once, then run regional and global stats as separate branches.
+- Confirm failure policy: if regional fails, global can still run, and vice versa, with clear error reporting.
+
+Primary History
+- 2d975ab adding v4 files
+
+Planned Work
+- Define the canonical v4 single-job pipeline order before deeper implementation changes.
+- Define how regional and global statistics branches should be selected and reported.
+- Define failure semantics for preflight, source dataset build, and statistics branches.
+- Define high-level resume expectations without implementing full checkpointing yet.
+- Define runtime configuration keys and defaults that later implementation steps can rely on.
+
+Actual Work Completed
+- Added the written behavior contract in refactor_plan_docs/step1_behavior_contract.txt.
+- Defined the canonical stage order:
+  1. Preflight/config validation.
+  2. Source dataset build.
+  3. Source merge barrier.
+  4. Statistics branches.
+  5. Finalize/run summary.
+- Established that fcst, ana, and clim source datasets are shared inputs for both statistics branches.
+- Established that regional and global statistics outputs remain separate.
+- Defined stats_types behavior for regional, global, and both.
+- Defined partial failure behavior when stats_types is both.
+- Documented safe resume expectations as a future implementation target.
+- Documented suggested runtime configuration keys:
+  - pipeline_mode
+  - stats_types
+  - pipeline_fail_policy
+  - pipeline_branch_execution
+  - pipeline_resume_mode
+  - pipeline_summary_file
+
+Files Involved
+- refactor_plan_docs/step1_behavior_contract.txt
+- refactor_plan_docs/v4_refactor_plan.txt
+
+Known Limits
+- This step was intentionally document-first.
+- Full resume/checkpoint behavior was not implemented here.
+- The source merge barrier was defined conceptually, but later steps still need stronger validation before deletion/cleanup.
+
+Notes For Future Steps
+- Treat this behavior contract as the source of truth when changing pipeline control flow.
+- If regional/global branches become truly parallel later, keep the partial failure semantics from this step.

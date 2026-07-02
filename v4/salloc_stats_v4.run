@@ -172,7 +172,7 @@ echo ""
 
 # Run the Python orchestrator with output redirection
 echo "Running Python orchestrator..."
-python -u "WORK_DIR_PLACEHOLDER/stats_trimmed_v4.py" \
+python -u "WORK_DIR_PLACEHOLDER/stats_v4.py" \
     --config "VERSIONED_YAML_PLACEHOLDER" \
     --pipeline \
     --stats_types "STATS_TYPES_PLACEHOLDER" \
@@ -210,7 +210,7 @@ if ($generate_only == 1) then
     echo "  bash $pipeline_script"
     echo ""
     echo "Or run directly with:"
-    echo "  python -u ${work_dir}/stats_trimmed_v4.py \\"
+    echo "  python -u ${work_dir}/stats_v4.py \\"
     echo "    --config ${versioned_yaml} \\"
     echo "    --pipeline \\"
     echo "    --stats_types ${stats_types} \\"

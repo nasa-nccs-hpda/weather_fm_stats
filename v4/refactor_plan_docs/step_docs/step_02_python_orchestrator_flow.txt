@@ -1,0 +1,55 @@
+Step 2: Create One Python Orchestrator Flow
+
+Status
+- Completed.
+
+Original Plan
+- Add one main path in v4 that runs the full workflow end-to-end inside one SLURM job.
+- Keep existing single-purpose flags for debugging and manual reruns.
+
+Primary History
+- 2d975ab adding v4 files
+
+Planned Work
+- Add a pipeline mode that runs the main workflow from Python instead of relying on multiple coordinated SLURM jobs.
+- Preserve existing manual entry points for dataset-only processing, stats-only processing, chunk processing, and merge-only operations.
+- Keep the orchestration readable enough that future stages can add parallelism, resume behavior, and stronger logging.
+
+Actual Work Completed
+- Added --pipeline CLI mode in controller/cli_controller.py.
+- Added run_pipeline_mode(...), which organizes the end-to-end workflow into stages:
+  - Stage 1/4: Preflight.
+  - Stage 2/4: Source dataset build.
+  - Stage 3/4: Statistics branches.
+  - Stage 4/4: Finalize.
+- Added run_stats_branch(...) for regional/global branch execution.
+- Added write_pipeline_summary(...) for final pipeline status reporting.
+- Added validation to prevent --pipeline from being combined with incompatible manual flags.
+- Preserved existing single-purpose command paths:
+  - --process
+  - --fcst
+  - --ana
+  - --clim
+  - --stats
+  - --clean
+  - --merge_collections
+  - --merge_forecast_chunks
+  - chunk index flags
+  - single-forecast mode via --date
+
+Files Involved
+- stats_v4.py
+- controller/cli_controller.py
+- model/dataset_processor.py
+- model/statistics_processor.py
+- refactor_plan_docs/v4_refactor_plan.txt
+
+Known Limits
+- In the initial implementation, Stage 2 called BatchDatasetProcessor.process_batch(...) directly.
+- Later Step 4 work replaced the Stage 2 call with run_parallel_source_dataset_build(...).
+- pipeline_branch_execution can be configured as parallel, but statistics branches still run sequentially in the current code.
+- The orchestrator prints a safe resume message, but full checkpointing is still pending.
+
+Notes For Future Steps
+- The pipeline path is now the right place to add deterministic chunk planning, statistics chunk execution, merge validation, and summary improvements.
+- Existing manual flags should remain available for debugging on Discover.
