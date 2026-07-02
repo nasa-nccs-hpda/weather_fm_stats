@@ -9,6 +9,10 @@ from datetime import datetime
 from model.config_model import resolve_runtime_settings
 from model.dataset_parallel_executor import run_parallel_source_dataset_build
 from model.dataset_processor import BatchDatasetProcessor
+from model.statistics_parallel_executor import (
+    get_current_memory_mb,
+    run_parallel_statistics_branch,
+)
 from model.statistics_processor import StatisticsProcessor
 
 # ================== MAIN FUNCTION ==================
@@ -46,6 +50,10 @@ def parse_arguments():
                         help='Maximum worker processes for dataset build stage')
     parser.add_argument('--pipeline_chunk_size_fcst', type=int,
                         help='Forecast init-date chunk size for dataset parallelism')
+    parser.add_argument('--pipeline_max_workers_stats', type=int,
+                        help='Maximum worker processes for statistics stage')
+    parser.add_argument('--pipeline_chunk_size_stats', type=int,
+                        help='Statistics init-date chunk size')
     # Processing options
     process_group = parser.add_argument_group('Processing options')
     process_group.add_argument('--check_only', action='store_true',
@@ -273,11 +281,18 @@ def print_runtime_contract(runtime_settings):
     print(f'  summary_file={runtime_settings.pipeline_summary_file}')
     print(f'  max_workers_dataset={runtime_settings.pipeline_max_workers_dataset}')
     print(f'  chunk_size_fcst={runtime_settings.pipeline_chunk_size_fcst}')
+    print(f'  max_workers_stats={runtime_settings.pipeline_max_workers_stats}')
+    print(f'  chunk_size_stats={runtime_settings.pipeline_chunk_size_stats}')
 
 
 def run_stats_branch(stats_kind, processor_config, dataset_files, init_dates,
-                     leads, info_dir):
+                     leads, info_dir, runtime_settings=None):
     '''Run one statistics branch and return status/error.'''
+    if runtime_settings is not None:
+        return run_parallel_statistics_branch(
+            stats_kind, processor_config, dataset_files, init_dates, leads,
+            info_dir, runtime_settings)
+
     try:
         stats_processor = StatisticsProcessor(
             processor_config, dataset_files=dataset_files,
@@ -307,6 +322,7 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
     os.makedirs(summary_dir, exist_ok=True)
     summary_path = os.path.join(summary_dir,
                                 runtime_settings.pipeline_summary_file)
+    pipeline_max_memory = None
     with open(summary_path, 'w', encoding='utf-8') as f:
         f.write('v4 pipeline summary\n')
         f.write(f'final_status: {final_status}\n')
@@ -321,7 +337,43 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
             f.write(f'{branch_name}_status: {branch_result["status"]}\n')
             if branch_result['error']:
                 f.write(f'{branch_name}_error: {branch_result["error"]}\n')
+            if 'chunk_count' in branch_result:
+                f.write(f'{branch_name}_chunk_count: '
+                        f'{branch_result["chunk_count"]}\n')
+                f.write(f'{branch_name}_required_chunk_count: '
+                        f'{branch_result["required_chunk_count"]}\n')
+                f.write(f'{branch_name}_skipped_chunk_count: '
+                        f'{branch_result["skipped_chunk_count"]}\n')
+            if 'max_workers' in branch_result:
+                f.write(f'{branch_name}_max_workers: '
+                        f'{branch_result["max_workers"]}\n')
+            if branch_result.get('max_memory_mb') is not None:
+                f.write(f'{branch_name}_max_memory_mb: '
+                        f'{branch_result["max_memory_mb"]}\n')
+        branch_memory = [
+            result.get('max_memory_mb') for result in branch_results.values()
+            if result.get('max_memory_mb') is not None
+        ]
+        current_memory = get_current_memory_mb()
+        memory_values = branch_memory + (
+            [current_memory] if current_memory is not None else [])
+        if memory_values:
+            pipeline_max_memory = max(memory_values)
+            f.write(f'pipeline_max_memory_mb: {pipeline_max_memory}\n')
     print(f'[INFO] Pipeline summary written: {summary_path}')
+    print('[INFO] Pipeline final summary:')
+    for branch_name, branch_result in branch_results.items():
+        print(f'  {branch_name}: {branch_result["status"]}')
+        if 'chunk_count' in branch_result:
+            print(f'    chunks={branch_result["chunk_count"]} '
+                  f'required={branch_result["required_chunk_count"]} '
+                  f'skipped={branch_result["skipped_chunk_count"]}')
+        if 'max_workers' in branch_result:
+            print(f'    max_workers={branch_result["max_workers"]}')
+        if branch_result.get('max_memory_mb') is not None:
+            print(f'    max_memory_mb={branch_result["max_memory_mb"]}')
+    if pipeline_max_memory is not None:
+        print(f'  pipeline_max_memory_mb={pipeline_max_memory}')
 
 
 def run_pipeline_mode(args, single_fcst_mode):
@@ -384,7 +436,7 @@ def run_pipeline_mode(args, single_fcst_mode):
         print(f'[INFO] Running {branch} statistics branch...')
         branch_results[branch] = run_stats_branch(
             branch, processor.config, dataset_files, init_dates, leads,
-            args.info_dir)
+            args.info_dir, runtime_settings=runtime_settings)
         if (branch_results[branch]['status'] != 'SUCCESS' and
             runtime_settings.pipeline_fail_policy == 'fail_fast'):
             print('[ERROR] fail_fast policy triggered')

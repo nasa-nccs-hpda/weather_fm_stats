@@ -1,7 +1,7 @@
 Step 6: Parallelize Statistics Calculation In Python
 
 Status
-- Planned.
+- Implemented locally; pending Discover validation.
 
 Original Plan
 - Use the deterministic chunk plan to split regional and global statistics by init_dates.
@@ -50,13 +50,54 @@ Planned Acceptance Criteria
 - Final regional/global statistics outputs match the existing non-chunked output naming convention.
 
 Actual Implementation
-- Pending.
+- Added model/statistics_parallel_executor.py.
+- Added run_parallel_statistics_branch(...) to orchestrate one regional or global stats branch with init-date chunks.
+- Reused InitDateChunkPlanner from Step 5 for statistics chunk plans.
+- Added chunk plan files:
+  - chunk_plan_stats_reg.json
+  - chunk_plan_stats_glo.json
+- Added ProcessPoolExecutor execution for required statistics chunks.
+- Kept regional and global branches sequential at the pipeline level to avoid nested oversubscription.
+- Each stats worker creates its own StatisticsProcessor and runs the existing chunk mode:
+  - run_regional_statistics(..., using_chunks=True, skip_avg=True)
+  - run_global_statistics(..., using_chunks=True, skip_avg=True)
+- Stats chunk filenames now use deterministic chunk IDs from the plan.
+- Stats chunk results are sorted by chunk_index before branch completion.
+- Updated StatisticsProcessor.merge_statistics_files(...) to accept an optional chunk plan.
+- Plan-aware stats merge now:
+  - merges only expected required chunk files
+  - fails if a required chunk file is missing
+  - validates expected init_date count before saving final merged output
+  - preserves the old glob fallback when no plan is supplied
+- Added runtime settings:
+  - pipeline_chunk_size_stats
+  - pipeline_max_workers_stats
+- Added conservative default stats worker behavior: use configured workers when provided, otherwise cap automatic stats workers at 4.
+- Added per-branch memory fields to the pipeline summary and final run log when resource usage is available:
+  - regional_max_memory_mb
+  - global_max_memory_mb
+  - pipeline_max_memory_mb
 
 Actual Files Changed
-- Pending.
+- controller/cli_controller.py
+- model/config_model.py
+- model/statistics_parallel_executor.py
+- model/statistics_processor.py
+- refactor_plan_docs/step_docs/step_06_parallel_statistics_calculation.txt
 
 Validation Notes
-- Pending. Validation should be performed on Discover with a small date range before trying the full May case.
+- Not run locally.
+- Validate on Discover with the small five-day T/T2m YAML before trying the full May case.
+- Recommended checks:
+  - stats chunk plans are written under outputs/<info_dir>/tmp.
+  - regional and global stats chunks use deterministic chunk IDs.
+  - stats merge logs that it is using the chunk plan.
+  - missing required stats chunks fail the branch.
+  - final regional/global stats filenames match the prior non-chunked naming convention.
+  - run_summary.txt and the final run log include per-branch chunk counts and memory fields.
 
 Known Limits After This Step
-- Pending.
+- Full restart/resume checkpointing is not implemented.
+- The pipeline writes stats chunk plans but does not yet reload them.
+- Regional and global branches still run sequentially; each branch can run chunks in parallel.
+- Memory reporting uses process max RSS when available on the platform.

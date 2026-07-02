@@ -37,6 +37,8 @@ class RuntimeSettings:
     pipeline_summary_file: str
     pipeline_max_workers_dataset: int
     pipeline_chunk_size_fcst: int
+    pipeline_max_workers_stats: int
+    pipeline_chunk_size_stats: int
 
 
 def _resolve_setting(cli_value, yaml_value, default_value):
@@ -85,6 +87,16 @@ def resolve_runtime_settings(args, config):
         config.get('pipeline_chunk_size_fcst'),
         2,
     )
+    pipeline_max_workers_stats = _resolve_setting(
+        getattr(args, 'pipeline_max_workers_stats', None),
+        config.get('pipeline_max_workers_stats'),
+        None,
+    )
+    pipeline_chunk_size_stats = _resolve_setting(
+        getattr(args, 'pipeline_chunk_size_stats', None),
+        config.get('pipeline_chunk_size_stats'),
+        2,
+    )
 
     valid_stats_types = {'regional', 'global', 'both'}
     valid_fail_policy = {'fail_fast', 'partial_ok'}
@@ -129,6 +141,21 @@ def resolve_runtime_settings(args, config):
     if pipeline_chunk_size_fcst < 1:
         raise ValueError('pipeline_chunk_size_fcst must be >= 1')
 
+    if pipeline_max_workers_stats is not None:
+        try:
+            pipeline_max_workers_stats = int(pipeline_max_workers_stats)
+        except (TypeError, ValueError):
+            raise ValueError('pipeline_max_workers_stats must be an integer')
+        if pipeline_max_workers_stats < 1:
+            raise ValueError('pipeline_max_workers_stats must be >= 1')
+
+    try:
+        pipeline_chunk_size_stats = int(pipeline_chunk_size_stats)
+    except (TypeError, ValueError):
+        raise ValueError('pipeline_chunk_size_stats must be an integer')
+    if pipeline_chunk_size_stats < 1:
+        raise ValueError('pipeline_chunk_size_stats must be >= 1')
+
     return RuntimeSettings(
         stats_types=stats_types,
         pipeline_fail_policy=pipeline_fail_policy,
@@ -137,4 +164,6 @@ def resolve_runtime_settings(args, config):
         pipeline_summary_file=pipeline_summary_file,
         pipeline_max_workers_dataset=pipeline_max_workers_dataset,
         pipeline_chunk_size_fcst=pipeline_chunk_size_fcst,
+        pipeline_max_workers_stats=pipeline_max_workers_stats,
+        pipeline_chunk_size_stats=pipeline_chunk_size_stats,
     )

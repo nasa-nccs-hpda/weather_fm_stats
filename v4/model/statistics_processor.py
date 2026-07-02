@@ -1211,19 +1211,46 @@ class StatisticsProcessor:
         print(f'[SUCCESS] Wrote {len(self.init_dates)} scorecard files')
 
     @classmethod
-    def merge_statistics_files(cls, stats_type: str, info_dir: str) -> bool:
+    def merge_statistics_files(cls, stats_type: str, info_dir: str,
+                               chunk_specs=None) -> bool:
         '''Merge chunked stats files and calculate averages over init_dates'''
         print('\n==================================================')
         print('MERGING STATISTICS FILES')
         print('==================================================')
 
         # Establish filename pattern, look for chunks, and report
-        pattern = f'outputs/{info_dir}/tmp/stats_chunk_{stats_type}_*.nc4'
-        print(f'[INFO] Looking for chunks for {stats_type}')
-        chunk_files = sorted(glob.glob(pattern))
+        if chunk_specs is None:
+            pattern = f'outputs/{info_dir}/tmp/stats_chunk_{stats_type}_*.nc4'
+            print(f'[INFO] Looking for chunks for {stats_type}')
+            chunk_files = sorted(glob.glob(pattern))
+            expected_init_dates = None
+        else:
+            print(f'[INFO] Using stats chunk plan for {stats_type} merge')
+            sorted_chunks = sorted(
+                chunk_specs, key=lambda chunk: chunk.chunk_index)
+            chunk_files = []
+            missing_files = []
+            expected_init_dates = 0
+            skipped_count = 0
+            for chunk in sorted_chunks:
+                if not chunk.selected_dates:
+                    skipped_count += 1
+                    continue
+                expected_init_dates += len(chunk.selected_dates)
+                if os.path.exists(chunk.output_path):
+                    chunk_files.append(chunk.output_path)
+                else:
+                    missing_files.append(chunk.output_path)
+            if skipped_count:
+                print(f'[INFO] Skipping {skipped_count} empty statistics '
+                      'chunk(s) from merge')
+            if missing_files:
+                print('[ERROR] Missing required statistics chunk file(s):')
+                for file in missing_files:
+                    print(f'  - {file}')
+                return False
         if not chunk_files:
-            print(f'[ERROR] No statistics files found matching pattern: '
-                  f'{pattern}')
+            print('[ERROR] No statistics files found to merge')
             return False
         print(f'[INFO] Found {len(chunk_files)} statistics files to merge:')
         for file in chunk_files:
@@ -1263,6 +1290,8 @@ class StatisticsProcessor:
                 gc.collect()
             except Exception as e:
                 print(f'[WARNING] Could not process {file}: {e}')
+                if chunk_specs is not None:
+                    return False
                 continue
         if merged_ds is None:
             print('[ERROR] No valid statistics datasets could be loaded')
@@ -1274,6 +1303,13 @@ class StatisticsProcessor:
             merged_ds = merged_ds.sortby('init_date')
             print(f'[INFO] Sorted {len(merged_ds.init_date)} init dates in '
                   f'chronological order')
+            if (expected_init_dates is not None and
+                len(merged_ds.init_date) != expected_init_dates):
+                print('[ERROR] Merged statistics init_date count '
+                      f'{len(merged_ds.init_date)} does not match expected '
+                      f'count {expected_init_dates}')
+                merged_ds.close()
+                return False
 
             # restore regular grid weights if global
             if stats_type == 'glo' and 'original_grid_weights' in locals():
