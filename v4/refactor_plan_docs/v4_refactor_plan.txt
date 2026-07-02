@@ -10,7 +10,7 @@
   - Put worker counts, chunk sizes, and resume behavior in one place (YAML + CLI overrides).
   - Keep defaults safe for your node size.
 
-4. Parallelize source dataset creation in Python (Estimated LOC: 180-420)
+4. Parallelize source dataset creation in Python (Estimated LOC: 180-420) [Completed]
   - Move heavy parallel work from SLURM job arrays into local worker processes.
   - Start with forecast chunk processing (biggest win), then collection-level parallel work.
   - Add clear wait points before merge stages.
