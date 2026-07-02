@@ -1,7 +1,7 @@
 Step 6: Parallelize Statistics Calculation In Python
 
 Status
-- Implemented locally; pending Discover validation.
+- Small Discover validation succeeded; larger-YAML validation in progress.
 
 Original Plan
 - Use the deterministic chunk plan to split regional and global statistics by init_dates.
@@ -87,7 +87,8 @@ Actual Files Changed
 
 Validation Notes
 - Not run locally.
-- Validate on Discover with the small five-day T/T2m YAML before trying the full May case.
+- Small five-day T/T2m Discover validation completed successfully.
+- Larger-YAML validation is still in progress.
 - Recommended checks:
   - stats chunk plans are written under outputs/<info_dir>/tmp.
   - regional and global stats chunks use deterministic chunk IDs.
@@ -95,6 +96,12 @@ Validation Notes
   - missing required stats chunks fail the branch.
   - final regional/global stats filenames match the prior non-chunked naming convention.
   - run_summary.txt and the final run log include per-branch chunk counts and memory fields.
+
+Testing Observation
+- The small Discover run showed the statistics chunking and plan-aware stats merge working as expected.
+- Larger-YAML testing revealed that source dataset regridding can still be slow before statistics begin.
+- The likely bottleneck is ana/clim dataset regridding, because Step 4 parallelized forecast chunks but left ana and clim processing in the sequential follow-up path.
+- This observation motivated the new Step 7: parallelize analysis and climatology dataset creation in Python.
 
 Known Limits After This Step
 - Full restart/resume checkpointing is not implemented.

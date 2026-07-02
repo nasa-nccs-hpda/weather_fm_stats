@@ -3,6 +3,7 @@ Step 4: Parallelize Source Dataset Creation In Python
 Status
 - Completed for forecast chunk parallelism.
 - Not fully completed for collection-level parallelism.
+- Later testing showed this step also missed ana/clim regridding parallelism.
 
 Original Plan
 - Move heavy parallel work from SLURM job arrays into local worker processes.
@@ -43,6 +44,13 @@ Actual Work Completed
 - Added output of resolved dataset worker and forecast chunk size settings in the runtime contract.
 - Preserved the manual --merge_forecast_chunks command.
 
+Retrospective Gap
+- Step 4 was named as general source dataset parallelization, but the actual implementation focused on forecast init-date chunks.
+- Analysis and climatology dataset processing still run in the follow-up process_batch(...) call after forecast merge.
+- Regridding inside that follow-up path remains sequential across analysis valid times and climatology cycles.
+- This became visible during larger-YAML testing after Step 6, where ana/clim regridding remained a bottleneck.
+- A new refactor step should extend deterministic chunk planning and plan-aware merge validation to ana and clim datasets.
+
 Follow-Up Fixes And Stabilization
 - Added Stage 2 debug output for returned dataset files.
 - Added example YAML file stats_AIFS_ERA5_MAY_2024.yaml.
@@ -66,7 +74,7 @@ Files Involved
 
 Known Limits
 - Forecast is the only source dataset currently parallelized.
-- Ana and clim are still processed as follow-up work after forecast processing.
+- Ana and clim are still processed as follow-up work after forecast processing, including their regridding.
 - Collection-level parallelism was planned but does not appear to be implemented.
 - The executor still uses implicit state changes such as setting model names to empty strings to disable dataset types.
 - Chunk result order is based on completion order when ProcessPoolExecutor uses as_completed(...), so future deterministic chunk planning should not rely on that list order.
