@@ -1,7 +1,7 @@
 Step 5: Make Init-Date Chunk Planning And Merge Contracts Deterministic
 
 Status
-- Planned.
+- Implemented locally; pending Discover validation.
 
 Original Plan
 - This step replaces the earlier direct jump into statistics parallelism.
@@ -55,13 +55,49 @@ Planned Acceptance Criteria
 - Existing manual chunk and merge commands remain available for debugging.
 
 Actual Implementation
-- Pending.
+- Added a shared chunk planning helper in model/chunk_plan.py.
+- Added ChunkSpec records with:
+  - chunk_index
+  - start_idx
+  - end_idx
+  - all_dates
+  - selected_dates
+  - status
+  - output_path
+- Added InitDateChunkPlanner to build chunks from the full configured init-date sequence before exclusions.
+- Applied exclusions inside each chunk.
+- Marked chunks with no selected dates as skipped.
+- Added JSON writing for chunk plans so planned and final chunk statuses can be inspected later.
+- Updated forecast dataset chunk execution to use ChunkSpec records instead of raw start/end tuples.
+- Forecast workers now return chunk_index, chunk_id, start/end indices, output_path, status, and processed date count.
+- Forecast chunk results are sorted by chunk_index before being returned.
+- Forecast merge can now accept the chunk plan and merge only expected required chunk files.
+- Forecast merge now treats skipped chunks as complete only when they are explicit in the plan.
+- Forecast merge now fails if an expected required chunk file is missing.
+- Forecast merge keeps the old glob-based behavior when no chunk plan is supplied, preserving manual --merge_forecast_chunks debugging.
+- Forecast merge validates the merged forecast file before deleting expected chunk files.
 
 Actual Files Changed
-- Pending.
+- model/chunk_plan.py
+- model/dataset_parallel_executor.py
+- model/dataset_processor.py
+- refactor_plan_docs/step_docs/step_05_deterministic_chunk_planning.txt
 
 Validation Notes
-- Pending. Validation will be performed on Discover by the user unless explicitly requested otherwise.
+- Not run locally.
+- Validation should be performed on Discover by running a small forecast-processing pipeline case.
+- Recommended checks:
+  - chunk_plan_fcst.json is written under outputs/<info_dir>/tmp.
+  - chunk records are ordered by chunk_index.
+  - excluded-date-only chunks are marked skipped.
+  - required chunks produce the expected output paths.
+  - forecast merge fails if a required chunk file is missing.
+  - forecast merge deletes only expected required chunk files after successful validation.
+  - manual --merge_forecast_chunks still works without a chunk plan.
 
 Known Limits After This Step
-- Pending.
+- Statistics chunking is not implemented yet.
+- Statistics merge still uses the older glob-based behavior.
+- Full restart/resume checkpointing is not implemented.
+- The chunk plan JSON is written for debugging and future resume support, but the pipeline does not yet reload it.
+- Merged forecast validation is intentionally basic: the final file must open, include init_date, and match the expected init_date count.

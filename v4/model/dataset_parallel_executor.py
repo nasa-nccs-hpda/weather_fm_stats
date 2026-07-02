@@ -4,16 +4,8 @@ import os
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+from model.chunk_plan import InitDateChunkPlanner, write_chunk_plan
 from model.dataset_processor import BatchDatasetProcessor
-
-
-def _build_chunk_ranges(total_dates, chunk_size):
-    '''Build inclusive start/end index chunk ranges.'''
-    ranges = []
-    for start_idx in range(0, total_dates, chunk_size):
-        end_idx = min(total_dates - 1, start_idx + chunk_size - 1)
-        ranges.append((start_idx, end_idx))
-    return ranges
 
 
 def _resolve_dataset_workers(runtime_settings, num_chunks):
@@ -33,7 +25,7 @@ def _resolve_dataset_workers(runtime_settings, num_chunks):
     return max_workers
 
 
-def _run_fcst_chunk_worker(config_path, info_dir, start_idx, end_idx,
+def _run_fcst_chunk_worker(config_path, info_dir, chunk_spec,
                            single_fcst_mode):
     '''Worker entrypoint for one forecast chunk.'''
     processor = BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode)
@@ -43,8 +35,8 @@ def _run_fcst_chunk_worker(config_path, info_dir, start_idx, end_idx,
     results = processor.process_batch(
         target_coll=None,
         info_dir=info_dir,
-        date_start_idx=start_idx,
-        date_end_idx=end_idx,
+        date_start_idx=chunk_spec.start_idx,
+        date_end_idx=chunk_spec.end_idx,
         check_only=False,
         skip_calc_mode=False,
         single_fcst_mode=single_fcst_mode,
@@ -53,21 +45,24 @@ def _run_fcst_chunk_worker(config_path, info_dir, start_idx, end_idx,
     if results.get('status') != 'success':
         reason = results.get('reason', 'unknown')
         raise RuntimeError(
-            f'Forecast chunk {start_idx}-{end_idx} failed: {reason}')
+            f'Forecast chunk {chunk_spec.chunk_id} failed: {reason}')
 
     if results.get('reason') == 'no_dates_in_chunk':
         return {
             'status': 'skipped',
-            'start_idx': start_idx,
-            'end_idx': end_idx,
+            'chunk_index': chunk_spec.chunk_index,
+            'chunk_id': chunk_spec.chunk_id,
+            'start_idx': chunk_spec.start_idx,
+            'end_idx': chunk_spec.end_idx,
+            'output_path': chunk_spec.output_path,
             'processed_dates': 0,
         }
 
     processor.save_processed_datasets(
         results,
         info_dir=info_dir,
-        date_start_idx=start_idx,
-        date_end_idx=end_idx,
+        date_start_idx=chunk_spec.start_idx,
+        date_end_idx=chunk_spec.end_idx,
         target_coll=None,
         single_fcst_mode=bool(single_fcst_mode),
         skip_calc_mode=False,
@@ -75,10 +70,29 @@ def _run_fcst_chunk_worker(config_path, info_dir, start_idx, end_idx,
 
     return {
         'status': 'success',
-        'start_idx': start_idx,
-        'end_idx': end_idx,
+        'chunk_index': chunk_spec.chunk_index,
+        'chunk_id': chunk_spec.chunk_id,
+        'start_idx': chunk_spec.start_idx,
+        'end_idx': chunk_spec.end_idx,
+        'output_path': chunk_spec.output_path,
         'processed_dates': len(results.get('init_dates', [])),
     }
+
+
+def _chunk_result_from_spec(chunk_spec, status=None, error=None):
+    '''Build a deterministic result record from a chunk spec.'''
+    result = {
+        'status': status or chunk_spec.status,
+        'chunk_index': chunk_spec.chunk_index,
+        'chunk_id': chunk_spec.chunk_id,
+        'start_idx': chunk_spec.start_idx,
+        'end_idx': chunk_spec.end_idx,
+        'output_path': chunk_spec.output_path,
+        'processed_dates': len(chunk_spec.selected_dates),
+    }
+    if error:
+        result['error'] = error
+    return result
 
 
 def _forecast_needs_processing(config_path, info_dir, single_fcst_mode):
@@ -123,27 +137,66 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                 'chunk_results': chunk_results,
             }
 
-        chunk_ranges = _build_chunk_ranges(
-            total_dates, runtime_settings.pipeline_chunk_size_fcst)
-        max_workers = _resolve_dataset_workers(runtime_settings,
-                                               len(chunk_ranges))
+        chunk_output_dir = os.path.join('outputs', str(info_dir), 'tmp')
+        chunk_specs = InitDateChunkPlanner(
+            init_dates_full,
+            exclude_dates=base_processor.config.get('exclude_dates', []),
+        ).build(
+            runtime_settings.pipeline_chunk_size_fcst,
+            chunk_output_dir,
+            'fcst',
+        )
+        plan_path = os.path.join(chunk_output_dir, 'chunk_plan_fcst.json')
+        write_chunk_plan(plan_path, chunk_specs)
 
-        print(f'[INFO] Forecast chunking plan: {len(chunk_ranges)} chunk(s), '
+        required_chunks = [
+            chunk_spec for chunk_spec in chunk_specs
+            if chunk_spec.is_required
+        ]
+        skipped_chunks = [
+            chunk_spec for chunk_spec in chunk_specs
+            if chunk_spec.is_skipped
+        ]
+        if skipped_chunks:
+            chunk_results.extend(
+                _chunk_result_from_spec(chunk_spec)
+                for chunk_spec in skipped_chunks
+            )
+        if not required_chunks:
+            write_chunk_plan(plan_path, chunk_specs)
+            return {
+                'status': 'failed',
+                'reason': 'no_forecast_dates_after_exclusions',
+                'chunk_results': sorted(
+                    chunk_results, key=lambda item: item['chunk_index']),
+            }
+
+        max_workers = _resolve_dataset_workers(runtime_settings,
+                                               len(required_chunks))
+
+        print(f'[INFO] Forecast chunking plan: {len(chunk_specs)} chunk(s), '
+              f'{len(required_chunks)} required, '
+              f'{len(skipped_chunks)} skipped, '
               f'chunk_size={runtime_settings.pipeline_chunk_size_fcst}, '
               f'max_workers={max_workers}')
 
         chunk_failures = []
         if max_workers == 1:
-            for start_idx, end_idx in chunk_ranges:
+            for chunk_spec in required_chunks:
                 try:
                     result = _run_fcst_chunk_worker(
-                        config_path, info_dir, start_idx, end_idx,
+                        config_path, info_dir, chunk_spec,
                         single_fcst_mode)
+                    chunk_spec.status = result['status']
                     chunk_results.append(result)
                 except Exception as exc:
                     traceback.print_exc()
-                    chunk_failures.append(
-                        f'Chunk {start_idx}-{end_idx} failed: {exc}')
+                    chunk_spec.status = 'failed'
+                    error = f'Chunk {chunk_spec.chunk_id} failed: {exc}'
+                    chunk_failures.append(error)
+                    chunk_results.append(
+                        _chunk_result_from_spec(
+                            chunk_spec, status='failed', error=str(exc)))
         else:
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
                 futures = {
@@ -151,21 +204,30 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                         _run_fcst_chunk_worker,
                         config_path,
                         info_dir,
-                        start_idx,
-                        end_idx,
+                        chunk_spec,
                         single_fcst_mode,
-                    ): (start_idx, end_idx)
-                    for start_idx, end_idx in chunk_ranges
+                    ): chunk_spec
+                    for chunk_spec in required_chunks
                 }
 
                 for future in as_completed(futures):
-                    start_idx, end_idx = futures[future]
+                    chunk_spec = futures[future]
                     try:
-                        chunk_results.append(future.result())
+                        result = future.result()
+                        chunk_spec.status = result['status']
+                        chunk_results.append(result)
                     except Exception as exc:
                         traceback.print_exc()
-                        chunk_failures.append(
-                            f'Chunk {start_idx}-{end_idx} failed: {exc}')
+                        chunk_spec.status = 'failed'
+                        error = f'Chunk {chunk_spec.chunk_id} failed: {exc}'
+                        chunk_failures.append(error)
+                        chunk_results.append(
+                            _chunk_result_from_spec(
+                                chunk_spec, status='failed', error=str(exc)))
+
+        chunk_results = sorted(
+            chunk_results, key=lambda item: item['chunk_index'])
+        write_chunk_plan(plan_path, chunk_specs)
 
         if chunk_failures:
             return {
@@ -176,7 +238,8 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
             }
 
         if not base_processor.merge_forecast_chunks(
-                info_dir, save_for_coll_merge=False):
+                info_dir, save_for_coll_merge=False,
+                chunk_specs=chunk_specs):
             return {
                 'status': 'failed',
                 'reason': 'forecast_chunk_merge_failed',

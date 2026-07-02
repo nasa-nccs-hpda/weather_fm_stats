@@ -3111,7 +3111,8 @@ class BatchDatasetProcessor:
         }
 
     def merge_forecast_chunks(self, info_dir: str,
-                              save_for_coll_merge: bool = False) -> bool:
+                              save_for_coll_merge: bool = False,
+                              chunk_specs = None) -> bool:
         '''
         Merge forecast chunk files with proper naming and save location
         Parameters:
@@ -3123,9 +3124,36 @@ class BatchDatasetProcessor:
         print('==================================================')
 
         # Find and organize chunk files
-        pattern = f'outputs/{info_dir}/tmp/fcst_chunk_*.nc4'
-        print(f'[INFO] Looking for forecast chunks matching: {pattern}')
-        chunk_files = sorted(glob.glob(pattern))
+        if chunk_specs is None:
+            pattern = f'outputs/{info_dir}/tmp/fcst_chunk_*.nc4'
+            print(f'[INFO] Looking for forecast chunks matching: {pattern}')
+            chunk_files = sorted(glob.glob(pattern))
+            expected_init_dates = None
+        else:
+            print('[INFO] Using forecast chunk plan for merge order')
+            sorted_chunks = sorted(
+                chunk_specs, key=lambda chunk: chunk.chunk_index)
+            chunk_files = []
+            missing_files = []
+            expected_init_dates = 0
+            skipped_count = 0
+            for chunk in sorted_chunks:
+                if not chunk.selected_dates:
+                    skipped_count += 1
+                    continue
+                expected_init_dates += len(chunk.selected_dates)
+                if os.path.exists(chunk.output_path):
+                    chunk_files.append(chunk.output_path)
+                else:
+                    missing_files.append(chunk.output_path)
+            if skipped_count:
+                print(f'[INFO] Skipping {skipped_count} empty forecast '
+                      'chunk(s) from merge')
+            if missing_files:
+                print('[ERROR] Missing required forecast chunk file(s):')
+                for file in missing_files:
+                    print(f'  - {file}')
+                return False
         if not chunk_files:
             print('[ERROR] No forecast chunk files found')
             return False
@@ -3199,8 +3227,26 @@ class BatchDatasetProcessor:
             merged_ds.to_netcdf(output_file, encoding=encoding)
             print(f'[SUCCESS] Merged forecast saved to {output_file}')
 
-            # Close dataset
+            # Close merged inputs before reopening the final file to validate.
             merged_ds.close()
+
+            # Validate merged output before cleanup
+            try:
+                with xr.open_dataset(output_file, decode_timedelta=True
+                                     ) as validation_ds:
+                    if 'init_date' not in validation_ds.coords:
+                        print('[ERROR] Merged forecast missing init_date '
+                              'coordinate')
+                        return False
+                    if (expected_init_dates is not None and
+                        len(validation_ds.init_date) != expected_init_dates):
+                        print('[ERROR] Merged forecast init_date count '
+                              f'{len(validation_ds.init_date)} does not match '
+                              f'expected count {expected_init_dates}')
+                        return False
+            except Exception as e:
+                print(f'[ERROR] Could not validate merged forecast: {e}')
+                return False
 
             # Delete chunk files after successful merge
             print('[INFO] Deleting chunk files after successful merge...')
