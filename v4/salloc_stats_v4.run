@@ -1,0 +1,247 @@
+#!/bin/csh
+
+module load python/GEOSpyD
+
+# Create unique timestamp for job files
+set timestamp = `date +%Y%m%d_%H%M%S`
+
+set YAML_FILENAME = "stats_AIFS_ERA5_MAY_2024.yaml"
+
+# Handle optional generate-only mode and YAML filename argument
+set generate_only = 0
+if ($#argv >= 1) then
+    if ("$1" == "--generate-only") then
+        set generate_only = 1
+        if ($#argv >= 2) then
+            set filename = "$2"
+        else
+            set filename = $YAML_FILENAME
+        endif
+    else
+        set filename = "$1"
+    endif
+else
+    set filename = $YAML_FILENAME
+endif
+
+# Check if YAML file exists before proceeding
+if (! -f "$filename") then
+    echo "Error: YAML file '$filename' not found"
+    exit 1
+endif
+
+echo "Using config file: $filename"
+
+# Read and validate model names
+foreach model_name (fcst_model ana_model clim_model)
+    set model_value = `grep -v '^[[:space:]]*#' "${filename}" | grep "${model_name}:" | sed "s/.*${model_name}:[[:space:]]*//" | sed 's/[[:space:]]*#.*//'`
+    
+    # Check for non-alphanumeric characters
+    set check = `echo "$model_value" | grep -E '^[[:alnum:]]+$'`
+    if ("$check" == "") then
+        echo "Error: $model_name contains non-alphanumeric characters or is empty"
+        exit 1
+    endif
+    
+    # Assign to specific variables
+    if ("$model_name" == "fcst_model") then
+        set fcst_model = "$model_value"
+    else if ("$model_name" == "ana_model") then
+        set ana_model = "$model_value"
+    else if ("$model_name" == "clim_model") then
+        set clim_model = "$model_value"
+    endif
+end
+
+echo "Models: fcst=$fcst_model, ana=$ana_model, clim=$clim_model"
+
+# Read parameters from config file
+set start_date = `grep -v '^[[:space:]]*#' "${filename}" | grep "start_date:" | awk '{print $2}' | sed 's/[#].*//'`
+set end_date = `grep -v '^[[:space:]]*#' "${filename}" | grep "end_date:" | awk '{print $2}' | sed 's/[#].*//'`
+
+if ("$start_date" == "" || "$end_date" == "") then
+    echo "Error: start_date and end_date must be specified in config file"
+    exit 1
+endif
+
+echo "Date range: $start_date to $end_date"
+
+# Make directories
+set work_dir = `pwd`
+set out_dir = "${work_dir}/outputs"
+set sts_dir = "stats_${fcst_model}_${ana_model}_${clim_model}_${start_date}-${end_date}_${timestamp}"
+set log_dir = "${work_dir}/outputs/${sts_dir}/logs"
+set job_dir = "${work_dir}/outputs/${sts_dir}/jobs"
+set tmp_dir = "${work_dir}/outputs/${sts_dir}/tmp"
+
+mkdir -p "${out_dir}"
+mkdir -p "${log_dir}"
+mkdir -p "${job_dir}"
+mkdir -p "${tmp_dir}"
+
+echo "Created directory structure:"
+echo "  Output dir: ${out_dir}/${sts_dir}"
+echo "  Log dir: ${log_dir}"
+echo "  Job dir: ${job_dir}"
+echo "  Tmp dir: ${tmp_dir}"
+
+# Create a versioned copy of the YAML file
+set versioned_yaml = "${job_dir}/stats_${fcst_model}_${ana_model}_${clim_model}.yaml"
+cp "$filename" "$versioned_yaml"
+echo "Created versioned config: $versioned_yaml"
+
+# Read SBATCH parameters from config file
+set account = `grep -v '^[[:space:]]*#' "${versioned_yaml}" | grep "account:" | awk '{print $2}' | sed 's/[#].*//'`
+set partition = `grep -v '^[[:space:]]*#' "${versioned_yaml}" | grep "partition:" | awk '{print $2}' | sed 's/[#].*//'`
+set qos = `grep -v '^[[:space:]]*#' "${versioned_yaml}" | grep "qos:" | awk '{print $2}' | sed 's/[#].*//'`
+set constraint = `grep -v '^[[:space:]]*#' "${versioned_yaml}" | grep "constraint:" | awk '{print $2}' | sed 's/[#].*//'`
+
+# Resource parameters
+set pipeline_time = `grep -v '^[[:space:]]*#' "${versioned_yaml}" | grep "pipeline_time:" | awk '{print $2}' | sed 's/[#].*//'`
+set pipeline_mem = `grep -v '^[[:space:]]*#' "${versioned_yaml}" | grep "pipeline_mem:" | awk '{print $2}' | sed 's/[#].*//'`
+set pipeline_cpus = `grep -v '^[[:space:]]*#' "${versioned_yaml}" | grep "pipeline_cpus:" | awk '{print $2}' | sed 's/[#].*//'`
+set pipeline_gres = `grep -v '^[[:space:]]*#' "${versioned_yaml}" | grep "pipeline_gres:" | awk '{print $2}' | sed 's/[#].*//'`
+
+# Set defaults if not specified
+if ("$pipeline_time" == "") set pipeline_time = "08:00:00"
+if ("$pipeline_mem" == "") set pipeline_mem = "450G"
+if ("$pipeline_cpus" == "") set pipeline_cpus = "48"
+
+echo "Resource requirements (for reference):"
+echo "  Time: $pipeline_time"
+echo "  Memory: $pipeline_mem"
+echo "  CPUs: $pipeline_cpus"
+if ("$pipeline_gres" != "") then
+    echo "  GRES: $pipeline_gres"
+endif
+
+# Determine stats modes to run
+set stats_types = `grep -v '^[[:space:]]*#' "${versioned_yaml}" | grep "stats_types:" | sed 's/.*stats_types:[[:space:]]*//' | sed 's/[[:space:]]*#.*//'`
+if ("$stats_types" == "") set stats_types = "both"
+
+set run_regional = 0
+set run_global = 0
+if ("$stats_types" == "regional" || "$stats_types" == "both") then
+    set run_regional = 1
+endif
+if ("$stats_types" == "global" || "$stats_types" == "both") then
+    set run_global = 1
+endif
+
+if ($run_regional == 0 && $run_global == 0) then
+    echo "Error: stats_types must be one of regional, global, or both"
+    exit 1
+endif
+
+echo "Stats types to run: $stats_types (regional=$run_regional, global=$run_global)"
+
+# Build the execution script
+set pipeline_script = "${job_dir}/stats_pipeline_direct.sh"
+cat > "$pipeline_script" << 'EOF_OUTER'
+#!/bin/bash
+#
+# Direct execution script for stats v4 pipeline
+# Generated: $(date)
+# Config: VERSIONED_YAML_PLACEHOLDER
+#
+
+set -e  # Exit on error
+set -u  # Exit on undefined variable
+
+echo "============================================"
+echo "Stats v4 Pipeline - Direct Execution"
+echo "Started: $(date)"
+echo "Host: $(hostname)"
+echo "User: $(whoami)"
+echo "Working Directory: $(pwd)"
+echo "============================================"
+echo ""
+
+# Load required modules
+source /usr/share/lmod/lmod/init/bash
+module load python/GEOSpyD
+
+# Change to working directory
+cd "WORK_DIR_PLACEHOLDER"
+
+# Log file
+log_file="LOG_DIR_PLACEHOLDER/stats_v4_pipeline_$(date +%Y%m%d_%H%M%S).log"
+
+echo "Log file: $log_file"
+echo ""
+
+# Run the Python orchestrator with output redirection
+echo "Running Python orchestrator..."
+python -u "WORK_DIR_PLACEHOLDER/stats_trimmed_v4.py" \
+    --config "VERSIONED_YAML_PLACEHOLDER" \
+    --pipeline \
+    --stats_types "STATS_TYPES_PLACEHOLDER" \
+    --info_dir "STS_DIR_PLACEHOLDER" \
+    2>&1 | tee "$log_file"
+
+exit_code=${PIPESTATUS[0]}
+
+echo ""
+echo "============================================"
+echo "Pipeline completed with exit code: $exit_code"
+echo "Finished: $(date)"
+echo "============================================"
+
+exit $exit_code
+EOF_OUTER
+
+# Replace placeholders
+sed -i "s|VERSIONED_YAML_PLACEHOLDER|${versioned_yaml}|g" "$pipeline_script"
+sed -i "s|WORK_DIR_PLACEHOLDER|${work_dir}|g" "$pipeline_script"
+sed -i "s|LOG_DIR_PLACEHOLDER|${log_dir}|g" "$pipeline_script"
+sed -i "s|STATS_TYPES_PLACEHOLDER|${stats_types}|g" "$pipeline_script"
+sed -i "s|STS_DIR_PLACEHOLDER|${sts_dir}|g" "$pipeline_script"
+
+chmod +x "$pipeline_script"
+
+if ($generate_only == 1) then
+    echo ""
+    echo "============================================"
+    echo "Generate-only mode enabled."
+    echo "Created pipeline execution script: $pipeline_script"
+    echo "Created versioned config: $versioned_yaml"
+    echo ""
+    echo "To run the pipeline, execute:"
+    echo "  bash $pipeline_script"
+    echo ""
+    echo "Or run directly with:"
+    echo "  python -u ${work_dir}/stats_trimmed_v4.py \\"
+    echo "    --config ${versioned_yaml} \\"
+    echo "    --pipeline \\"
+    echo "    --stats_types ${stats_types} \\"
+    echo "    --info_dir ${sts_dir}"
+    echo "============================================"
+    exit 0
+endif
+
+# Execute the pipeline directly
+echo ""
+echo "============================================"
+echo "Starting pipeline execution..."
+echo "Execution script: $pipeline_script"
+echo "============================================"
+echo ""
+
+# Run the pipeline script
+bash "$pipeline_script"
+set exit_code = $status
+
+echo ""
+echo "============================================"
+if ($exit_code == 0) then
+    echo "✓ Pipeline completed successfully!"
+else
+    echo "✗ Pipeline failed with exit code: $exit_code"
+endif
+echo "============================================"
+echo ""
+echo "Output directory: ${out_dir}/${sts_dir}"
+echo "Logs directory: ${log_dir}"
+echo ""
+
+exit $exit_code
