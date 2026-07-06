@@ -1,0 +1,53 @@
+Step 9: Improve Logs And Run Summary
+
+Status
+- Planned.
+
+Purpose
+- Make each run easier to inspect after it finishes on Discover.
+- Record enough timing, status, and resource information to compare short and long runs without reconstructing details from file timestamps.
+
+Planned Work
+- Add pipeline start time, finish time, and elapsed wall time.
+- Write timing fields to run_summary.txt.
+- Print the same timing fields in the final pipeline log summary.
+- Keep per-branch status, chunk counts, worker counts, and memory fields from Step 6.
+- Add stage-level timing if it can be done cleanly:
+  - Stage 1 preflight
+  - Stage 2 source dataset build
+  - Stage 3 statistics branches
+  - Stage 4 finalize
+- Keep log messages concise and stable enough to grep.
+- Consider adding wrapper-level start/finish/elapsed timestamps to salloc_stats_v4.run and sbatch_stats_v4.run if Python-level timing is not enough.
+
+Out Of Scope For This Step
+- Do not add full restart/resume checkpointing.
+- Do not redesign branch execution.
+- Do not add external monitoring dependencies.
+- Do not change scientific outputs.
+
+Planned Files To Inspect Or Touch
+- controller/cli_controller.py
+- salloc_stats_v4.run
+- sbatch_stats_v4.run
+- refactor_plan_docs/v4_refactor_plan.txt
+- refactor_plan_docs/step_docs/step_09_logs_and_run_summary.txt
+
+Planned Acceptance Criteria
+- run_summary.txt includes pipeline_start_time.
+- run_summary.txt includes pipeline_finish_time.
+- run_summary.txt includes pipeline_elapsed_seconds or an equivalent elapsed field.
+- Final log summary prints start time, finish time, and elapsed wall time.
+- The elapsed time can be read directly from a copied Discover log without relying on file modification timestamps.
+- Existing Step 6 memory summary fields remain present.
+- Existing successful run behavior is otherwise unchanged.
+
+Actual Implementation
+- Pending.
+
+Validation Notes
+- Pending. Validate with the small five-day T/T2m YAML first.
+- Confirm copied logs under logs/ contain the final elapsed-time summary.
+
+Known Limits After This Step
+- Pending.
