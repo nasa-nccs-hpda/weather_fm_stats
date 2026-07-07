@@ -18,6 +18,13 @@ parameters:
 
     # run stats_regional (for corcmp) and/or stats_global (for syscmp)? [regional, global, both, or none]
     stats_types: both
+    # conservative defaults for single-job pipeline parallelism
+    pipeline_max_workers_dataset: 2
+    pipeline_max_workers_stats: 4
+    pipeline_chunk_size_fcst: 2
+    pipeline_chunk_size_ana: 2
+    pipeline_chunk_size_clim: 2
+    pipeline_chunk_size_stats: 2
     # optional location(s) to search for pre-existing processed fcst/ana/clim datasets [comma-separated list]
     # dir_loc: [/path/to/loc1, /path/to/loc2]
 
