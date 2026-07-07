@@ -82,8 +82,8 @@ set pipeline_cpus = `grep -v '^[[:space:]]*#' ${versioned_yaml} | grep "pipeline
 set pipeline_gres = `grep -v '^[[:space:]]*#' ${versioned_yaml} | grep "pipeline_gres:" | awk '{print $2}' | sed 's/[#].*//'`
 
 if ("$pipeline_time" == "") set pipeline_time = "08:00:00"
-if ("$pipeline_mem" == "") set pipeline_mem = "450G"
-if ("$pipeline_cpus" == "") set pipeline_cpus = "48"
+if ("$pipeline_mem" == "") set pipeline_mem = "64G"
+if ("$pipeline_cpus" == "") set pipeline_cpus = "10"
 
 # Determine stats modes to run
 set stats_types = `grep -v '^[[:space:]]*#' ${versioned_yaml} | grep "stats_types:" | sed 's/.*stats_types:[[:space:]]*//' | sed 's/[[:space:]]*#.*//'`

@@ -44,10 +44,11 @@
   - Allow one branch to fail without preventing the other from completing when fail policy permits.
   - Defer concurrent regional/global branch execution to a future refactor version after shared-read filesystem and memory behavior can be tested safely.
 
-9. Add restart and resume support (Estimated LOC: 160-360)
-  - Track stage, branch, and chunk completion.
-  - On rerun, skip completed good outputs and continue from the first incomplete point.
-  - Avoid redoing expensive steps unless required.
+9. Add restart and resume support (Estimated LOC: 160-360) [Completed]
+  - Reuse validated final source datasets and final regional/global statistics outputs in safe resume mode.
+  - Report reused statistics branches explicitly with REUSED status and reuse reason.
+  - Rebuild missing or invalid final outputs; do not trust partial old chunk outputs.
+  - Defer full chunk-level checkpoint/resume to a later refactor if needed.
 
 10. Improve logging for parallel processing (Estimated LOC: 80-180)
   - Reduce normal-case output verbosity so successful runs are easier to scan.

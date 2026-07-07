@@ -44,7 +44,8 @@ Files Involved
 
 Known Limits
 - Runtime settings are centralized for current pipeline controls, but statistics-specific worker and chunk settings do not exist yet.
-- pipeline_resume_mode is resolved and printed, but full resume/checkpoint behavior is not implemented.
+- pipeline_resume_mode is resolved and printed. Step 9 later adds conservative
+  final-output resume; full chunk-level checkpointing remains deferred.
 - Resource awareness was partially implemented during Step 4 through SLURM_CPUS_PER_TASK for dataset workers, even though the current plan still lists broader resource-aware worker counts as a later step.
 
 Notes For Future Steps

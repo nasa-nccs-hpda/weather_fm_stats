@@ -7,6 +7,8 @@ import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 
+import xarray as xr
+
 from model.chunk_plan import InitDateChunkPlanner, write_chunk_plan
 from model.statistics_processor import StatisticsProcessor
 
@@ -85,6 +87,49 @@ def _expected_statistics_output_path(stats_kind, processor_config,
     return None
 
 
+def _validate_existing_statistics_output(output_path, expected_init_dates,
+                                         stats_kind):
+    '''Lightly validate an existing merged statistics output.'''
+    if not output_path or not os.path.exists(output_path):
+        return False, 'output file does not exist'
+    try:
+        with xr.open_dataset(output_path, decode_timedelta=True) as ds:
+            if 'init_date' not in ds.dims and 'init_date' not in ds.coords:
+                return False, 'missing init_date dimension/coordinate'
+            actual_init_dates = ds.sizes.get('init_date', len(ds.init_date))
+            if actual_init_dates != expected_init_dates:
+                return (
+                    False,
+                    f'init_date count {actual_init_dates} does not match '
+                    f'expected {expected_init_dates}',
+                )
+            if stats_kind == 'regional' and 'region' not in ds.dims:
+                return False, 'missing regional region dimension'
+            if stats_kind == 'global':
+                if 'lat' not in ds.dims or 'lon' not in ds.dims:
+                    return False, 'missing global lat/lon dimensions'
+        return True, ''
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _remove_stale_stats_chunks(chunk_specs):
+    '''Remove old stats chunk outputs before rebuilding a branch.'''
+    deleted_count = 0
+    for chunk_spec in chunk_specs:
+        if not chunk_spec.is_required:
+            continue
+        if os.path.exists(chunk_spec.output_path):
+            try:
+                os.remove(chunk_spec.output_path)
+                deleted_count += 1
+            except Exception as exc:
+                print(f'[WARNING] Could not remove stale stats chunk '
+                      f'{chunk_spec.output_path}: {exc}')
+    if deleted_count:
+        print(f'[INFO] Removed {deleted_count} stale statistics chunk file(s)')
+
+
 def _run_stats_chunk_worker(stats_kind, processor_config, dataset_files,
                             leads, info_dir, chunk_spec):
     '''Worker entrypoint for one statistics chunk.'''
@@ -145,6 +190,41 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
                                    info_dir, runtime_settings):
     '''Run one statistics branch with init-date chunk parallelism.'''
     stats_type = _stats_type_for_branch(stats_kind)
+    expected_output_path = _expected_statistics_output_path(
+        stats_kind, processor_config, dataset_files)
+    configured_max_workers = (
+        runtime_settings.pipeline_max_workers_stats_regional
+        if stats_kind == 'regional'
+        else runtime_settings.pipeline_max_workers_stats_global)
+
+    if runtime_settings.pipeline_resume_mode == 'safe':
+        is_valid, validation_error = _validate_existing_statistics_output(
+            expected_output_path, len(init_dates), stats_kind)
+        if is_valid:
+            print(f'[INFO] Reusing existing {stats_kind} statistics output: '
+                  f'{expected_output_path}')
+            return {
+                'status': 'REUSED',
+                'error': '',
+                'branch': stats_kind,
+                'stats_type': stats_type,
+                'chunk_results': [],
+                'chunk_count': 0,
+                'required_chunk_count': 0,
+                'skipped_chunk_count': 0,
+                'completed_chunk_count': 0,
+                'failed_chunk_count': 0,
+                'max_workers': 0,
+                'configured_max_workers': configured_max_workers,
+                'chunk_size': runtime_settings.pipeline_chunk_size_stats,
+                'max_memory_mb': get_current_memory_mb(),
+                'output_path': expected_output_path,
+                'reuse_reason': 'valid existing statistics output',
+            }
+        if expected_output_path and os.path.exists(expected_output_path):
+            print(f'[WARNING] Existing {stats_kind} statistics output will '
+                  f'not be reused: {validation_error}')
+
     chunk_output_dir = os.path.join('outputs', str(info_dir), 'tmp')
     chunk_specs = InitDateChunkPlanner(
         init_dates,
@@ -171,8 +251,6 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
     ]
 
     if not required_chunks:
-        expected_output_path = _expected_statistics_output_path(
-            stats_kind, processor_config, dataset_files)
         return {
             'status': 'FAILURE',
             'error': 'No statistics init_dates available after exclusions',
@@ -186,10 +264,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
             'completed_chunk_count': 0,
             'failed_chunk_count': 0,
             'max_workers': 0,
-            'configured_max_workers': (
-                runtime_settings.pipeline_max_workers_stats_regional
-                if stats_kind == 'regional'
-                else runtime_settings.pipeline_max_workers_stats_global),
+            'configured_max_workers': configured_max_workers,
             'chunk_size': runtime_settings.pipeline_chunk_size_stats,
             'max_memory_mb': get_current_memory_mb(),
             'output_path': expected_output_path,
@@ -203,6 +278,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
           f'{len(skipped_chunks)} skipped, '
           f'chunk_size={runtime_settings.pipeline_chunk_size_stats}, '
           f'max_workers={max_workers}')
+    _remove_stale_stats_chunks(required_chunks)
 
     chunk_failures = []
     completed_required_chunks = 0
@@ -309,8 +385,6 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
         1 for result in chunk_results if result.get('status') == 'success')
     failed_chunk_count = sum(
         1 for result in chunk_results if result.get('status') == 'failed')
-    expected_output_path = _expected_statistics_output_path(
-        stats_kind, processor_config, dataset_files)
 
     if chunk_failures:
         return {
@@ -325,10 +399,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
             'completed_chunk_count': completed_chunk_count,
             'failed_chunk_count': failed_chunk_count,
             'max_workers': max_workers,
-            'configured_max_workers': (
-                runtime_settings.pipeline_max_workers_stats_regional
-                if stats_kind == 'regional'
-                else runtime_settings.pipeline_max_workers_stats_global),
+            'configured_max_workers': configured_max_workers,
             'chunk_size': runtime_settings.pipeline_chunk_size_stats,
             'max_memory_mb': branch_max_memory,
             'output_path': expected_output_path,
@@ -348,10 +419,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
             'completed_chunk_count': completed_chunk_count,
             'failed_chunk_count': failed_chunk_count,
             'max_workers': max_workers,
-            'configured_max_workers': (
-                runtime_settings.pipeline_max_workers_stats_regional
-                if stats_kind == 'regional'
-                else runtime_settings.pipeline_max_workers_stats_global),
+            'configured_max_workers': configured_max_workers,
             'chunk_size': runtime_settings.pipeline_chunk_size_stats,
             'max_memory_mb': branch_max_memory,
             'output_path': expected_output_path,
@@ -369,10 +437,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
         'completed_chunk_count': completed_chunk_count,
         'failed_chunk_count': failed_chunk_count,
         'max_workers': max_workers,
-        'configured_max_workers': (
-            runtime_settings.pipeline_max_workers_stats_regional
-            if stats_kind == 'regional'
-            else runtime_settings.pipeline_max_workers_stats_global),
+        'configured_max_workers': configured_max_workers,
         'chunk_size': runtime_settings.pipeline_chunk_size_stats,
         'max_memory_mb': branch_max_memory,
         'output_path': expected_output_path,

@@ -514,6 +514,9 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
             f.write(f'{branch_name}_status: {branch_result["status"]}\n')
             if branch_result.get('error'):
                 f.write(f'{branch_name}_error: {branch_result["error"]}\n')
+            if branch_result.get('reuse_reason'):
+                f.write(f'{branch_name}_reuse_reason: '
+                        f'{branch_result["reuse_reason"]}\n')
             if branch_result.get('execution_mode'):
                 f.write(f'{branch_name}_execution_mode: '
                         f'{branch_result["execution_mode"]}\n')
@@ -608,6 +611,8 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
         print(f'  {branch_name}: {branch_result["status"]}')
         if branch_result.get('error'):
             print(f'    error={branch_result["error"]}')
+        if branch_result.get('reuse_reason'):
+            print(f'    reuse_reason={branch_result["reuse_reason"]}')
         if 'chunk_count' in branch_result:
             print(f'    chunks={branch_result["chunk_count"]} '
                   f'required={branch_result["required_chunk_count"]} '
@@ -664,7 +669,8 @@ def run_pipeline_mode(args, single_fcst_mode):
         print_runtime_contract(runtime_settings)
         if runtime_settings.pipeline_resume_mode == 'safe':
             print('[INFO] Resume mode is safe '
-                  '(full checkpointing pending later step)')
+                  '(validated final outputs may be reused; chunk-level '
+                  'checkpointing is not enabled)')
 
     print('[INFO] Stage 2/4: Source dataset build')
     with record_pipeline_stage(stage_metrics, 'stage_2_source_dataset_build'):
@@ -740,6 +746,7 @@ def run_pipeline_mode(args, single_fcst_mode):
                   f'status={branch_results[branch]["status"]}, '
                   f'wall_seconds={branch_results[branch]["wall_seconds"]}')
             if (branch_results[branch]['status'] != 'SUCCESS' and
+                branch_results[branch]['status'] != 'REUSED' and
                 runtime_settings.pipeline_fail_policy == 'fail_fast'):
                 print('[ERROR] fail_fast policy triggered')
                 fail_fast_triggered = True
@@ -761,7 +768,7 @@ def run_pipeline_mode(args, single_fcst_mode):
         return 1
 
     success_count = sum(1 for r in branch_results.values()
-                        if r['status'] == 'SUCCESS')
+                        if r['status'] in ['SUCCESS', 'REUSED'])
     if success_count == len(requested_branches):
         final_status = 'SUCCESS'
         exit_code = 0

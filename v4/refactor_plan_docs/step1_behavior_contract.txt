@@ -8,7 +8,8 @@ Purpose
 Scope of Step 1
 - Lock execution order and branching rules.
 - Lock failure policy for independent regional/global branches.
-- Lock high-level resume expectations (without implementing full resume yet).
+- Lock high-level resume expectations. Step 9 later implemented conservative
+  final-output resume; full chunk-level checkpointing remains deferred.
 - Define runtime configuration keys and defaults for this behavior.
 
 1) Canonical Pipeline Order
@@ -118,4 +119,5 @@ Use these keys (YAML) to support step-1 behavior decisions now:
 Notes
 - This step does not require major algorithm changes.
 - This step is about decisions, explicit contracts, and interfaces.
-- Implementation for parallelism and full resume is in later steps.
+- Implementation for parallelism and final-output resume is handled in later
+  steps; full chunk-level checkpointing remains deferred.

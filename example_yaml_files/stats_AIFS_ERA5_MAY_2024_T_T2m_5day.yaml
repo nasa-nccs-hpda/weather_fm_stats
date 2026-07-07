@@ -87,3 +87,5 @@ parameters:
     partition: gpu_a100
     qos: alla100
     constraint: rome
+    pipeline_cpus: 10
+    pipeline_mem: 64G

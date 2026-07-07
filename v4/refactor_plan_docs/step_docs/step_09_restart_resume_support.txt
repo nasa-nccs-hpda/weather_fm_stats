@@ -1,0 +1,73 @@
+Step 9: Restart And Resume Support
+
+Status
+- Implemented for final-output safe resume; deeper chunk-level checkpointing is
+  deferred.
+
+Reason For This Step
+- Several expensive stages already write deterministic final outputs.
+- Source dataset reuse was mostly present before this step, but regional/global
+  statistics still reran even when valid final statistics outputs already
+  existed.
+- The goal is conservative HPC rerun behavior: reuse validated final outputs
+  and rebuild only missing or invalid final outputs.
+
+Implemented Behavior
+- Source datasets continue to use existing validated fcst, ana, and clim final
+  outputs where available.
+- In pipeline_resume_mode=safe, regional/global statistics now check the
+  expected final statistics output before launching statistics chunks.
+- A valid existing statistics output is returned as status REUSED.
+- REUSED is treated as a successful branch outcome for final pipeline status and
+  fail_fast handling.
+- Branch summaries now include reuse_reason when a statistics branch is reused.
+- Statistics output reuse performs lightweight validation:
+  final file exists, init_date coordinate/dimension exists, init_date count
+  matches the configured run, regional output has region dimension, and global
+  output has lat/lon dimensions.
+- If a final statistics output exists but fails validation in safe mode, it is
+  not reused and the branch is rebuilt.
+- Before rebuilding a statistics branch, stale required stats chunk files for
+  that branch are removed so old partial chunks do not contaminate the rerun.
+- In pipeline_resume_mode=off, statistics branches do not reuse final statistics
+  outputs and will recompute.
+
+Out Of Scope For This Step
+- Do not reload chunk-plan JSON to resume individual completed chunks.
+- Do not trust partial old statistics chunk outputs as complete work.
+- Do not add a persistent checkpoint database.
+- Do not change statistical calculations or output filenames.
+- Do not change regional/global branch execution from serial to concurrent.
+- Do not perform the broader logging consolidation planned for Step 10.
+
+Files Touched
+- model/statistics_parallel_executor.py
+- controller/cli_controller.py
+- refactor_plan_docs/v4_refactor_plan.txt
+- refactor_plan_docs/step_docs/step_09_restart_resume_support.txt
+
+Validation Notes
+- Ran Python compile validation on changed v4 modules:
+  python -m py_compile v4\model\statistics_parallel_executor.py
+  v4\controller\cli_controller.py v4\model\config_model.py
+- Did not run stats_v4.py or v4 run scripts locally; those are intended for the
+  HPC environment.
+
+Recommended HPC Tests
+- Run a completed config again with pipeline_resume_mode=safe and confirm source
+  datasets plus regional/global statistics are reused.
+- Delete only the global final statistics output and confirm regional is REUSED
+  while global rebuilds.
+- Delete only the regional final statistics output and confirm global is REUSED
+  while regional rebuilds.
+- Set pipeline_resume_mode=off and confirm regional/global statistics recompute
+  even when final outputs already exist.
+- If a final stats file is corrupt or has the wrong init_date count, confirm it
+  is not reused and the branch rebuilds.
+
+Known Limits After This Step
+- Resume support is final-output based, not chunk-level checkpoint based.
+- Source dataset resume behavior still depends on the existing dataset validation
+  already implemented in BatchDatasetProcessor.
+- Lightweight statistics validation checks shape-level expectations, not deep
+  scientific equivalence.

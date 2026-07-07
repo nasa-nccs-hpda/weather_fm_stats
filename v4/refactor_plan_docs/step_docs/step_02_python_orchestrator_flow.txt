@@ -48,7 +48,8 @@ Known Limits
 - In the initial implementation, Stage 2 called BatchDatasetProcessor.process_batch(...) directly.
 - Later Step 4 work replaced the Stage 2 call with run_parallel_source_dataset_build(...).
 - Step 8 later made v4 statistics branch execution explicitly sequential; concurrent regional/global branch execution is deferred to a future refactor version.
-- The orchestrator prints a safe resume message, but full checkpointing is still pending.
+- Step 9 later adds conservative final-output resume; full chunk-level
+  checkpointing remains deferred.
 
 Notes For Future Steps
 - The pipeline path is now the right place to add deterministic chunk planning, statistics chunk execution, merge validation, and summary improvements.
