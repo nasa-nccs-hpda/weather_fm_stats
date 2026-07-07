@@ -1,7 +1,7 @@
 Step 7: Parallelize Analysis And Climatology Dataset Creation In Python
 
 Status
-- Planned.
+- Implemented.
 
 Reason For This Step
 - Step 4 parallelized forecast dataset chunks but did not parallelize analysis or climatology dataset creation.
@@ -44,10 +44,35 @@ Planned Acceptance Criteria
 - Existing valid ana/clim datasets are still reused instead of rebuilt.
 
 Actual Implementation
-- Pending.
+- Added generic deterministic sequence chunk planning for non-init-date work.
+- Added separate pipeline chunk-size settings for analysis and climatology:
+  pipeline_chunk_size_ana and pipeline_chunk_size_clim. Both default to
+  pipeline_chunk_size_fcst when omitted.
+- Added analysis and climatology valid-time selectors to BatchDatasetProcessor
+  so chunk workers process only their assigned valid-time slices.
+- Added deterministic chunk output saving for ana/clim using existing tmp
+  chunk filename conventions.
+- Added ana/clim worker execution in dataset_parallel_executor.py.
+- Added ana/clim chunk-plan JSON files in outputs/<info_dir>/tmp.
+- Added merge_time_chunks() for analysis and climatology chunks. It merges in
+  chunk-plan order, validates the final time coordinate count, and deletes
+  chunk files only after successful validation.
+- Replaced the serial analysis/climatology follow-up stage in pipeline mode
+  with separate parallel valid-time chunk builds for ana and clim.
+- Preserved final ana/clim filenames and existing-final-dataset skip behavior.
 
 Validation Notes
-- Pending. Validate first with the small five-day T/T2m YAML, then with the larger YAML that exposed the bottleneck.
+- Ran Python compile validation on changed v4 modules:
+  python -m py_compile v4\model\chunk_plan.py v4\model\config_model.py
+  v4\model\dataset_processor.py v4\model\dataset_parallel_executor.py
+  v4\controller\cli_controller.py
+- Did not run stats_v4.py or v4 run scripts locally; those are intended for
+  the HPC environment.
+- Still validate first on HPC with the small five-day T/T2m YAML, then with
+  the larger YAML that exposed the bottleneck.
 
 Known Limits After This Step
-- Pending.
+- Analysis and climatology chunks run as separate stages after forecast chunk
+  processing; regional and global statistics branches are still not made
+  concurrent by this step.
+- Full restart/resume checkpointing remains pending for a later step.

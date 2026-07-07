@@ -28,12 +28,12 @@
   - Write chunk outputs with expected deterministic names.
   - Merge statistics chunks automatically only after all required chunks finish successfully or are explicitly skipped.
 
-7. Parallelize analysis and climatology dataset creation in Python (Estimated LOC: 180-420)
-  - Extend source dataset parallelism beyond forecast chunks.
-  - Split analysis dataset processing by deterministic valid-time chunks.
-  - Split climatology dataset processing by deterministic valid-time or cycle chunks.
-  - Merge ana and clim chunk outputs in chunk-plan order, with validation before cleanup.
-  - Keep final ana and clim dataset filenames unchanged.
+7. Parallelize analysis and climatology dataset creation in Python (Estimated LOC: 260-520) [Completed]
+  - Extend deterministic chunk planning beyond forecast init-date chunks.
+  - Split analysis and climatology source dataset creation by deterministic valid-time chunks.
+  - Run analysis and climatology chunks with local worker processes inside the single pipeline job.
+  - Write deterministic ana/clim chunk output files and merge them in chunk-plan order.
+  - Preserve final ana/clim filenames and existing validated-dataset skip behavior.
 
 8. Strengthen regional and global branch independence (Estimated LOC: 100-220)
   - Keep regional and global stats as separate branches using the same fcst, ana, and clim inputs.

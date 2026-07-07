@@ -1,4 +1,4 @@
-'''Deterministic init-date chunk planning helpers.'''
+'''Deterministic chunk planning helpers.'''
 
 import json
 import os
@@ -82,6 +82,35 @@ class InitDateChunkPlanner:
                     _date_label(date_value) for date_value in selected_dates
                 ],
                 status='required' if selected_dates else 'skipped',
+                output_path=os.path.join(output_dir, output_name),
+            ))
+        return chunks
+
+
+class SequenceChunkPlanner:
+    '''Build deterministic chunks from an already ordered sequence.'''
+
+    def __init__(self, items: Iterable, label_func=None):
+        self.items = list(items)
+        self.label_func = label_func or str
+
+    def build(self, chunk_size, output_dir, output_prefix):
+        '''Return ChunkSpec objects in stable chunk_index order.'''
+        chunks = []
+        for chunk_index, start_idx in enumerate(
+                range(0, len(self.items), chunk_size)):
+            end_idx = min(len(self.items) - 1, start_idx + chunk_size - 1)
+            chunk_items = self.items[start_idx:end_idx + 1]
+            labels = [self.label_func(item) for item in chunk_items]
+            chunk_id = f'chunk_{start_idx:03d}_{end_idx:03d}'
+            output_name = f'{output_prefix}_{chunk_id}.nc4'
+            chunks.append(ChunkSpec(
+                chunk_index=chunk_index,
+                start_idx=start_idx,
+                end_idx=end_idx,
+                all_dates=labels,
+                selected_dates=labels,
+                status='required' if labels else 'skipped',
                 output_path=os.path.join(output_dir, output_name),
             ))
         return chunks

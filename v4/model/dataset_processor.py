@@ -1,5 +1,14 @@
 ﻿'''Dataset processing model.'''
 
+import warnings
+
+warnings.filterwarnings(
+    'ignore',
+    message='Latitude is outside of \\[-90, 90\\]',
+    category=UserWarning,
+    module='xesmf.backend',
+)
+
 import calendar
 import gc
 import glob
@@ -699,6 +708,21 @@ class BatchDatasetProcessor:
                 print(f'    [ERROR] Regridder creation failed: {e}')
                 return None
         return self.regridders[regridder_key]
+
+    def _make_regrid_input_contiguous(self, data_array):
+        '''Return a C-contiguous DataArray for xESMF regridding.'''
+        values = data_array.data
+        try:
+            if hasattr(values, 'flags') and values.flags['C_CONTIGUOUS']:
+                return data_array
+            contiguous_values = np.ascontiguousarray(values)
+            return xr.DataArray(contiguous_values,
+                                coords=data_array.coords,
+                                dims=data_array.dims,
+                                attrs=data_array.attrs,
+                                name=data_array.name)
+        except Exception:
+            return data_array
 
     def _get_file_by_templates(self, templates: List[str], base_dir: str,
                                date_vars: Dict[str, str], context_info: str,
@@ -1605,8 +1629,10 @@ class BatchDatasetProcessor:
                             and dep_var not in regridded_vars):
                             dep_source = dep_info['alias']
                             try:
-                                regridded_data = regridder(
-                                    ds_levels[dep_source])
+                                regrid_input = (
+                                    self._make_regrid_input_contiguous(
+                                        ds_levels[dep_source]))
+                                regridded_data = regridder(regrid_input)
                                 if 'time' in regridded_data.coords:
                                     regridded_data = (
                                         regridded_data.assign_coords(
@@ -1624,7 +1650,9 @@ class BatchDatasetProcessor:
                                                  f'{target_var}: {str(e)}')
                 continue  # Skip the calculated variable itself
             try:
-                regridded_data = regridder(ds_levels[source_var])
+                regrid_input = self._make_regrid_input_contiguous(
+                    ds_levels[source_var])
+                regridded_data = regridder(regrid_input)
                 if 'time' in regridded_data.coords:
                     regridded_data = (
                         regridded_data.assign_coords(time=std_coords))
@@ -1971,7 +1999,7 @@ class BatchDatasetProcessor:
 
     def _combine_into_structured_datasets(
             self, loaded_data, init_dates, init_dates_full, leads,
-            val_results=None, skip_calc_mode=False):
+            val_results=None, skip_calc_mode=False, clim_valid_times=None):
         '''Combine individual files into structured datasets (clim/ana/fcst)'''
 
         print('\n--- Combining into structured datasets ---')
@@ -1988,6 +2016,8 @@ class BatchDatasetProcessor:
                     valid_times.append(valid_time)
             # Remove duplicates and sort
             unique_valid_times = sorted(list(set(valid_times)))
+            if clim_valid_times is not None:
+                unique_valid_times = list(clim_valid_times)
             print(f'    Generated {len(unique_valid_times)} unique valid times'
                   f' for climatology')
             start_time = unique_valid_times[0]
@@ -2335,7 +2365,7 @@ class BatchDatasetProcessor:
     def save_processed_datasets(self, results, info_dir=None,
                                 date_start_idx=None, date_end_idx=None,
                                 target_coll=None, single_fcst_mode=False,
-                                skip_calc_mode=False):
+                                skip_calc_mode=False, chunk_id=None):
         '''Save newly created datasets using standard output naming rules.'''
         if single_fcst_mode:
             datasets = results['datasets']
@@ -2365,12 +2395,17 @@ class BatchDatasetProcessor:
                       f'{os.path.basename(existing_datasets[ds_nm])}')
                 continue
 
-            if date_start_idx is not None or date_end_idx is not None:
-                chunk_id = f'chunk_{date_start_idx:03d}_{date_end_idx:03d}'
+            if chunk_id is not None:
                 filenm = os.path.join(
                     f'outputs/{info_dir}/tmp',
                     self._generate_output_filenm(
                         ds_nm, chunk_id=chunk_id, info_dir=info_dir))
+            elif date_start_idx is not None or date_end_idx is not None:
+                date_chunk_id = f'chunk_{date_start_idx:03d}_{date_end_idx:03d}'
+                filenm = os.path.join(
+                    f'outputs/{info_dir}/tmp',
+                    self._generate_output_filenm(
+                        ds_nm, chunk_id=date_chunk_id, info_dir=info_dir))
             elif target_coll:
                 filenm = os.path.join(
                     f'outputs/{info_dir}/tmp',
@@ -2448,7 +2483,8 @@ class BatchDatasetProcessor:
 
     def process_batch(self, target_coll=None, info_dir=None,
                       date_start_idx=None, date_end_idx=None, check_only=False,
-                      skip_calc_mode=False, single_fcst_mode=None):
+                      skip_calc_mode=False, single_fcst_mode=None,
+                      ana_valid_times=None, clim_valid_times=None):
         '''Main batch processing method'''
         if target_coll:
             print(f'\n=== Collection-Specific Batch Processing: '
@@ -2732,13 +2768,6 @@ class BatchDatasetProcessor:
                 if coll_nm not in coll_modes:  # Not in coll_modes: no template
                     no_template_fcst_colls[coll_nm] = True
 
-        # Get unique hours needed for climatology (from leads)
-        unique_hours = set()
-        for fhour in leads:
-            hour = fhour % 24
-            unique_hours.add(f'{hour:02d}')
-        needed_cycles = sorted(unique_hours)
-
         # Calculate unique valid times for analysis files (full date range)
         unique_valid_times = set()
         for init_date in init_dates_full:
@@ -2746,6 +2775,23 @@ class BatchDatasetProcessor:
                 valid_time = init_date + timedelta(hours=fhour)
                 unique_valid_times.add(valid_time)
         unique_valid_times = sorted(list(unique_valid_times))
+        if ana_valid_times is not None:
+            unique_valid_times = list(ana_valid_times)
+
+        clim_unique_valid_times = set()
+        for init_date in init_dates_full:
+            for fhour in leads:
+                valid_time = init_date + timedelta(hours=fhour)
+                clim_unique_valid_times.add(valid_time)
+        clim_unique_valid_times = sorted(list(clim_unique_valid_times))
+        if clim_valid_times is not None:
+            clim_unique_valid_times = list(clim_valid_times)
+
+        # Get unique hours needed for climatology from selected valid times.
+        unique_hours = set()
+        for valid_time in clim_unique_valid_times:
+            unique_hours.add(f'{valid_time.hour:02d}')
+        needed_cycles = sorted(unique_hours)
 
         # Count files to check (only for enabled datasets)
         total_files_to_check = 0
@@ -2776,7 +2822,8 @@ class BatchDatasetProcessor:
                 f'analysis: {len(unique_valid_times)} unique valid times')
         if process_clim:
             file_set_details.append(
-                f'climatology: {len(needed_cycles)} cycles')
+                f'climatology: {len(clim_unique_valid_times)} valid times, '
+                f'{len(needed_cycles)} cycles')
         print(f'  Checking availability of {total_files_to_check} total file '
               f'sets...')
         for detail in file_set_details:
@@ -3073,7 +3120,7 @@ class BatchDatasetProcessor:
         # Step 4: Combine into structured datasets
         combined_datasets = self._combine_into_structured_datasets(
             loaded_data, init_dates, init_dates_full, leads, val_results,
-            skip_calc_mode)
+            skip_calc_mode, clim_valid_times=clim_unique_valid_times)
         # Add any existing datasets that had passed validation
         for dataset_type, file_path in existing_datasets.items():
             if dataset_type not in combined_datasets:
@@ -3265,6 +3312,131 @@ class BatchDatasetProcessor:
 
         except Exception as e:
             print(f'[ERROR] Failed to merge forecast chunks: {e}')
+            traceback.print_exc()
+            return False
+
+    def merge_time_chunks(self, dataset_type: str, info_dir: str,
+                          chunk_specs) -> bool:
+        '''Merge analysis/climatology time chunks in chunk-plan order.'''
+        print('\n==================================================')
+        print(f'MERGING {dataset_type.upper()} TIME CHUNKS')
+        print('==================================================')
+
+        if dataset_type not in ['ana', 'clim']:
+            print(f'[ERROR] Invalid time-chunk dataset type: {dataset_type}')
+            return False
+
+        sorted_chunks = sorted(chunk_specs, key=lambda chunk: chunk.chunk_index)
+        chunk_files = []
+        missing_files = []
+        expected_times = 0
+        skipped_count = 0
+        for chunk in sorted_chunks:
+            if not chunk.selected_dates:
+                skipped_count += 1
+                continue
+            expected_times += len(chunk.selected_dates)
+            if os.path.exists(chunk.output_path):
+                chunk_files.append(chunk.output_path)
+            else:
+                missing_files.append(chunk.output_path)
+
+        if skipped_count:
+            print(f'[INFO] Skipping {skipped_count} empty {dataset_type} '
+                  'chunk(s) from merge')
+        if missing_files:
+            print(f'[ERROR] Missing required {dataset_type} chunk file(s):')
+            for file in missing_files:
+                print(f'  - {file}')
+            return False
+        if not chunk_files:
+            print(f'[ERROR] No {dataset_type} chunk files found')
+            return False
+
+        output_file = os.path.join(
+            'outputs', self._generate_output_filenm(dataset_type))
+        print(f'[INFO] Merged {dataset_type} will be saved to: {output_file}')
+        print(f'[INFO] Found {len(chunk_files)} {dataset_type} chunk files:')
+        for file in chunk_files:
+            print(f'  - {os.path.basename(file)}')
+
+        try:
+            merged_ds = None
+            print(f'[INFO] Loading and merging {dataset_type} chunks...')
+            for i, file in enumerate(chunk_files):
+                try:
+                    print(f'[INFO] Processing file {i+1}/{len(chunk_files)}: '
+                          f'{os.path.basename(file)}')
+                    current_ds = xr.open_dataset(file, decode_timedelta=True)
+                    if merged_ds is None:
+                        merged_ds = current_ds
+                        print(f'[INFO] Loaded base dataset with '
+                              f'{len(merged_ds.time)} times')
+                    else:
+                        merged_ds = xr.concat([merged_ds, current_ds],
+                                              dim='time')
+                        print(f'[INFO] Merged dataset now has '
+                              f'{len(merged_ds.time)} times')
+                        current_ds.close()
+                        del current_ds
+                    gc.collect()
+                except Exception as e:
+                    print(f'[ERROR] Could not process {file}: {e}')
+                    return False
+
+            if merged_ds is None:
+                print(f'[ERROR] No valid {dataset_type} chunks could be loaded')
+                return False
+
+            merged_ds = merged_ds.sortby('time')
+            if 'grid_weights' in merged_ds and 'time' in merged_ds[
+                    'grid_weights'].dims:
+                merged_ds['grid_weights'] = merged_ds['grid_weights'].isel(
+                    time=0, drop=True)
+
+            encoding = {}
+            for var in merged_ds.variables:
+                encoding[var] = {'zlib': True, 'complevel': 2}
+                dtype_nm = str(merged_ds[var].dtype)
+                if 'float64' in dtype_nm:
+                    encoding[var]['dtype'] = 'float32'
+
+            print(f'[INFO] Saving merged {dataset_type} to {output_file}...')
+            merged_ds.to_netcdf(output_file, encoding=encoding)
+            print(f'[SUCCESS] Merged {dataset_type} saved to {output_file}')
+            merged_ds.close()
+
+            try:
+                with xr.open_dataset(output_file, decode_timedelta=True
+                                     ) as validation_ds:
+                    if 'time' not in validation_ds.coords:
+                        print(f'[ERROR] Merged {dataset_type} missing time '
+                              'coordinate')
+                        return False
+                    if len(validation_ds.time) != expected_times:
+                        print(f'[ERROR] Merged {dataset_type} time count '
+                              f'{len(validation_ds.time)} does not match '
+                              f'expected count {expected_times}')
+                        return False
+            except Exception as e:
+                print(f'[ERROR] Could not validate merged {dataset_type}: {e}')
+                return False
+
+            print('[INFO] Deleting chunk files after successful merge...')
+            deleted_count = 0
+            for file in chunk_files:
+                try:
+                    os.remove(file)
+                    deleted_count += 1
+                    print(f'  [OK] Deleted: {os.path.basename(file)}')
+                except Exception as e:
+                    print(f'  [ERROR] Could not delete {file}: {e}')
+            print(f'[INFO] Deleted {deleted_count}/{len(chunk_files)} '
+                  f'chunk files')
+            return True
+
+        except Exception as e:
+            print(f'[ERROR] Failed to merge {dataset_type} chunks: {e}')
             traceback.print_exc()
             return False
 
