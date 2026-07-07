@@ -50,6 +50,10 @@ def parse_arguments():
                         help='Maximum worker processes for dataset build stage')
     parser.add_argument('--pipeline_chunk_size_fcst', type=int,
                         help='Forecast init-date chunk size for dataset parallelism')
+    parser.add_argument('--pipeline_chunk_size_ana', type=int,
+                        help='Analysis valid-time chunk size for dataset parallelism')
+    parser.add_argument('--pipeline_chunk_size_clim', type=int,
+                        help='Climatology valid-time chunk size for dataset parallelism')
     parser.add_argument('--pipeline_max_workers_stats', type=int,
                         help='Maximum worker processes for statistics stage')
     parser.add_argument('--pipeline_chunk_size_stats', type=int,
@@ -281,6 +285,8 @@ def print_runtime_contract(runtime_settings):
     print(f'  summary_file={runtime_settings.pipeline_summary_file}')
     print(f'  max_workers_dataset={runtime_settings.pipeline_max_workers_dataset}')
     print(f'  chunk_size_fcst={runtime_settings.pipeline_chunk_size_fcst}')
+    print(f'  chunk_size_ana={runtime_settings.pipeline_chunk_size_ana}')
+    print(f'  chunk_size_clim={runtime_settings.pipeline_chunk_size_clim}')
     print(f'  max_workers_stats={runtime_settings.pipeline_max_workers_stats}')
     print(f'  chunk_size_stats={runtime_settings.pipeline_chunk_size_stats}')
 

@@ -37,6 +37,8 @@ class RuntimeSettings:
     pipeline_summary_file: str
     pipeline_max_workers_dataset: int
     pipeline_chunk_size_fcst: int
+    pipeline_chunk_size_ana: int
+    pipeline_chunk_size_clim: int
     pipeline_max_workers_stats: int
     pipeline_chunk_size_stats: int
 
@@ -86,6 +88,16 @@ def resolve_runtime_settings(args, config):
         getattr(args, 'pipeline_chunk_size_fcst', None),
         config.get('pipeline_chunk_size_fcst'),
         2,
+    )
+    pipeline_chunk_size_ana = _resolve_setting(
+        getattr(args, 'pipeline_chunk_size_ana', None),
+        config.get('pipeline_chunk_size_ana'),
+        pipeline_chunk_size_fcst,
+    )
+    pipeline_chunk_size_clim = _resolve_setting(
+        getattr(args, 'pipeline_chunk_size_clim', None),
+        config.get('pipeline_chunk_size_clim'),
+        pipeline_chunk_size_fcst,
     )
     pipeline_max_workers_stats = _resolve_setting(
         getattr(args, 'pipeline_max_workers_stats', None),
@@ -141,6 +153,20 @@ def resolve_runtime_settings(args, config):
     if pipeline_chunk_size_fcst < 1:
         raise ValueError('pipeline_chunk_size_fcst must be >= 1')
 
+    try:
+        pipeline_chunk_size_ana = int(pipeline_chunk_size_ana)
+    except (TypeError, ValueError):
+        raise ValueError('pipeline_chunk_size_ana must be an integer')
+    if pipeline_chunk_size_ana < 1:
+        raise ValueError('pipeline_chunk_size_ana must be >= 1')
+
+    try:
+        pipeline_chunk_size_clim = int(pipeline_chunk_size_clim)
+    except (TypeError, ValueError):
+        raise ValueError('pipeline_chunk_size_clim must be an integer')
+    if pipeline_chunk_size_clim < 1:
+        raise ValueError('pipeline_chunk_size_clim must be >= 1')
+
     if pipeline_max_workers_stats is not None:
         try:
             pipeline_max_workers_stats = int(pipeline_max_workers_stats)
@@ -164,6 +190,8 @@ def resolve_runtime_settings(args, config):
         pipeline_summary_file=pipeline_summary_file,
         pipeline_max_workers_dataset=pipeline_max_workers_dataset,
         pipeline_chunk_size_fcst=pipeline_chunk_size_fcst,
+        pipeline_chunk_size_ana=pipeline_chunk_size_ana,
+        pipeline_chunk_size_clim=pipeline_chunk_size_clim,
         pipeline_max_workers_stats=pipeline_max_workers_stats,
         pipeline_chunk_size_stats=pipeline_chunk_size_stats,
     )
