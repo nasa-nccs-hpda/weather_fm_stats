@@ -1,8 +1,10 @@
 '''CLI controller for selecting and running stats workflows.'''
 
 import argparse
+from contextlib import contextmanager
 import os
 import sys
+import time
 import traceback
 from datetime import datetime
 
@@ -16,6 +18,123 @@ from model.statistics_parallel_executor import (
 from model.statistics_processor import StatisticsProcessor
 
 # ================== MAIN FUNCTION ==================
+
+
+def _read_current_rss_mb():
+    '''Return current process RSS in MB on Linux when available.'''
+    try:
+        with open('/proc/self/statm', 'r', encoding='utf-8') as statm_file:
+            rss_pages = int(statm_file.read().split()[1])
+        page_size = os.sysconf('SC_PAGE_SIZE')
+        return round((rss_pages * page_size) / (1024 * 1024), 2)
+    except Exception:
+        return None
+
+
+def _read_max_rss_mb(include_children=False):
+    '''Return max RSS in MB from resource.getrusage when available.'''
+    try:
+        import resource
+        usage_target = (resource.RUSAGE_CHILDREN if include_children
+                        else resource.RUSAGE_SELF)
+        max_rss = resource.getrusage(usage_target).ru_maxrss
+    except Exception:
+        return None
+
+    if sys.platform == 'darwin':
+        return round(max_rss / (1024 * 1024), 2)
+    return round(max_rss / 1024, 2)
+
+
+def _cpu_total_seconds():
+    '''Return self + completed child CPU seconds.'''
+    times = os.times()
+    return round(
+        times.user + times.system + times.children_user +
+        times.children_system,
+        4,
+    )
+
+
+def _allocated_cpu_count():
+    '''Return SLURM CPU allocation when present, otherwise local CPU count.'''
+    slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK')
+    if slurm_cpus:
+        try:
+            return max(1, int(slurm_cpus))
+        except ValueError:
+            pass
+    return os.cpu_count() or 1
+
+
+def _slurm_memory_mb():
+    '''Return configured SLURM memory if exported by the scheduler.'''
+    mem_per_node = os.environ.get('SLURM_MEM_PER_NODE')
+    mem_per_cpu = os.environ.get('SLURM_MEM_PER_CPU')
+    cpus = _allocated_cpu_count()
+    try:
+        if mem_per_node:
+            return int(mem_per_node)
+        if mem_per_cpu:
+            return int(mem_per_cpu) * cpus
+    except ValueError:
+        return None
+    return None
+
+
+@contextmanager
+def record_pipeline_stage(stage_metrics, stage_name):
+    '''Record wall time, CPU time, and memory around one pipeline stage.'''
+    start_wall = time.time()
+    start_cpu = _cpu_total_seconds()
+    start_current_rss = _read_current_rss_mb()
+    start_max_rss = _read_max_rss_mb()
+    start_child_max_rss = _read_max_rss_mb(include_children=True)
+    cpu_count = _allocated_cpu_count()
+
+    print(f'[RESOURCE] START {stage_name}: '
+          f'current_rss_mb={start_current_rss} '
+          f'max_rss_mb={start_max_rss} cpus={cpu_count} '
+          f'slurm_mem_mb={_slurm_memory_mb()}')
+    try:
+        yield
+    finally:
+        end_wall = time.time()
+        end_cpu = _cpu_total_seconds()
+        wall_seconds = round(end_wall - start_wall, 2)
+        cpu_seconds = round(end_cpu - start_cpu, 2)
+        cpu_percent_of_allocation = None
+        if wall_seconds > 0 and cpu_count:
+            cpu_percent_of_allocation = round(
+                (cpu_seconds / (wall_seconds * cpu_count)) * 100, 2)
+        end_current_rss = _read_current_rss_mb()
+        end_max_rss = _read_max_rss_mb()
+        end_child_max_rss = _read_max_rss_mb(include_children=True)
+        max_rss_values = [
+            value for value in [start_max_rss, end_max_rss,
+                                start_child_max_rss, end_child_max_rss]
+            if value is not None
+        ]
+        max_rss_mb = max(max_rss_values) if max_rss_values else None
+        record = {
+            'stage': stage_name,
+            'wall_seconds': wall_seconds,
+            'cpu_seconds': cpu_seconds,
+            'cpu_percent_of_allocation': cpu_percent_of_allocation,
+            'allocated_cpus': cpu_count,
+            'start_current_rss_mb': start_current_rss,
+            'end_current_rss_mb': end_current_rss,
+            'max_rss_mb': max_rss_mb,
+            'self_max_rss_mb': end_max_rss,
+            'children_max_rss_mb': end_child_max_rss,
+            'slurm_mem_mb': _slurm_memory_mb(),
+        }
+        stage_metrics.append(record)
+        print(f'[RESOURCE] END {stage_name}: '
+              f'wall_seconds={wall_seconds} cpu_seconds={cpu_seconds} '
+              f'cpu_pct_of_alloc={cpu_percent_of_allocation} '
+              f'end_current_rss_mb={end_current_rss} '
+              f'max_rss_mb={max_rss_mb}')
 
 
 def parse_arguments():
@@ -320,7 +439,7 @@ def run_stats_branch(stats_kind, processor_config, dataset_files, init_dates,
 
 
 def write_pipeline_summary(info_dir, runtime_settings, branch_results,
-                           final_status):
+                           final_status, stage_metrics=None):
     '''Write run summary file for pipeline mode.'''
     if not info_dir:
         return
@@ -329,6 +448,7 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
     summary_path = os.path.join(summary_dir,
                                 runtime_settings.pipeline_summary_file)
     pipeline_max_memory = None
+    stage_metrics = stage_metrics or []
     with open(summary_path, 'w', encoding='utf-8') as f:
         f.write('v4 pipeline summary\n')
         f.write(f'final_status: {final_status}\n')
@@ -366,6 +486,30 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
         if memory_values:
             pipeline_max_memory = max(memory_values)
             f.write(f'pipeline_max_memory_mb: {pipeline_max_memory}\n')
+        if stage_metrics:
+            f.write('\nstage_resource_summary:\n')
+            for metric in stage_metrics:
+                prefix = metric['stage'].replace(' ', '_').lower()
+                f.write(f'{prefix}_wall_seconds: '
+                        f'{metric["wall_seconds"]}\n')
+                f.write(f'{prefix}_cpu_seconds: '
+                        f'{metric["cpu_seconds"]}\n')
+                f.write(f'{prefix}_cpu_percent_of_allocation: '
+                        f'{metric["cpu_percent_of_allocation"]}\n')
+                f.write(f'{prefix}_allocated_cpus: '
+                        f'{metric["allocated_cpus"]}\n')
+                f.write(f'{prefix}_start_current_rss_mb: '
+                        f'{metric["start_current_rss_mb"]}\n')
+                f.write(f'{prefix}_end_current_rss_mb: '
+                        f'{metric["end_current_rss_mb"]}\n')
+                f.write(f'{prefix}_max_rss_mb: '
+                        f'{metric["max_rss_mb"]}\n')
+                f.write(f'{prefix}_self_max_rss_mb: '
+                        f'{metric["self_max_rss_mb"]}\n')
+                f.write(f'{prefix}_children_max_rss_mb: '
+                        f'{metric["children_max_rss_mb"]}\n')
+                f.write(f'{prefix}_slurm_mem_mb: '
+                        f'{metric["slurm_mem_mb"]}\n')
     print(f'[INFO] Pipeline summary written: {summary_path}')
     print('[INFO] Pipeline final summary:')
     for branch_name, branch_result in branch_results.items():
@@ -380,6 +524,14 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
             print(f'    max_memory_mb={branch_result["max_memory_mb"]}')
     if pipeline_max_memory is not None:
         print(f'  pipeline_max_memory_mb={pipeline_max_memory}')
+    if stage_metrics:
+        print('  stage resource usage:')
+        for metric in stage_metrics:
+            print(f'    {metric["stage"]}: '
+                  f'wall={metric["wall_seconds"]}s '
+                  f'cpu={metric["cpu_seconds"]}s '
+                  f'cpu_pct_alloc={metric["cpu_percent_of_allocation"]} '
+                  f'max_rss_mb={metric["max_rss_mb"]}')
 
 
 def run_pipeline_mode(args, single_fcst_mode):
@@ -387,27 +539,34 @@ def run_pipeline_mode(args, single_fcst_mode):
     print('\n==================================================')
     print('V4 SINGLE-JOB PIPELINE')
     print('==================================================')
+    stage_metrics = []
     print('[INFO] Stage 1/4: Preflight')
 
-    processor = BatchDatasetProcessor.from_yaml(args.config, single_fcst_mode)
-    runtime_settings = resolve_runtime_settings(args, processor.config)
-    print_runtime_contract(runtime_settings)
-    if runtime_settings.pipeline_resume_mode == 'safe':
-        print('[INFO] Resume mode is safe (full checkpointing pending later step)')
+    with record_pipeline_stage(stage_metrics, 'stage_1_preflight'):
+        processor = BatchDatasetProcessor.from_yaml(args.config,
+                                                    single_fcst_mode)
+        runtime_settings = resolve_runtime_settings(args, processor.config)
+        print_runtime_contract(runtime_settings)
+        if runtime_settings.pipeline_resume_mode == 'safe':
+            print('[INFO] Resume mode is safe '
+                  '(full checkpointing pending later step)')
 
     print('[INFO] Stage 2/4: Source dataset build')
-    results = run_parallel_source_dataset_build(
-        args.config,
-        args.info_dir,
-        runtime_settings,
-        single_fcst_mode=single_fcst_mode,
-    )
+    with record_pipeline_stage(stage_metrics, 'stage_2_source_dataset_build'):
+        results = run_parallel_source_dataset_build(
+            args.config,
+            args.info_dir,
+            runtime_settings,
+            single_fcst_mode=single_fcst_mode,
+        )
 
     if results.get('status') != 'success':
         reason = results.get('reason', 'Unknown error')
         print(f'[ERROR] Dataset creation failed in pipeline mode: {reason}')
         for err in results.get('errors', []):
             print(f'  [ERROR] {err}')
+        write_pipeline_summary(args.info_dir, runtime_settings, {},
+                               'FAILURE', stage_metrics=stage_metrics)
         return 1
 
     dataset_files = results.get('dataset_files', {})
@@ -419,9 +578,13 @@ def run_pipeline_mode(args, single_fcst_mode):
     if missing_datasets:
         print(f'[ERROR] Missing datasets for stats: '
               f'{", ".join(sorted(missing_datasets))}')
+        write_pipeline_summary(args.info_dir, runtime_settings, {},
+                               'FAILURE', stage_metrics=stage_metrics)
         return 1
     if not init_dates or not leads:
         print('[ERROR] Missing init dates or lead times for statistics')
+        write_pipeline_summary(args.info_dir, runtime_settings, {},
+                               'FAILURE', stage_metrics=stage_metrics)
         return 1
     print(f'[INFO] RESULTS FROM STAGE 2 (datasets): {dataset_files}')
 
@@ -438,17 +601,23 @@ def run_pipeline_mode(args, single_fcst_mode):
               'for now in step 2/3 orchestration.')
 
     branch_results = {}
-    for branch in requested_branches:
-        print(f'[INFO] Running {branch} statistics branch...')
-        branch_results[branch] = run_stats_branch(
-            branch, processor.config, dataset_files, init_dates, leads,
-            args.info_dir, runtime_settings=runtime_settings)
-        if (branch_results[branch]['status'] != 'SUCCESS' and
-            runtime_settings.pipeline_fail_policy == 'fail_fast'):
-            print('[ERROR] fail_fast policy triggered')
-            write_pipeline_summary(args.info_dir, runtime_settings,
-                                   branch_results, 'FAILURE')
-            return 1
+    fail_fast_triggered = False
+    with record_pipeline_stage(stage_metrics, 'stage_3_statistics_branches'):
+        for branch in requested_branches:
+            print(f'[INFO] Running {branch} statistics branch...')
+            branch_results[branch] = run_stats_branch(
+                branch, processor.config, dataset_files, init_dates, leads,
+                args.info_dir, runtime_settings=runtime_settings)
+            if (branch_results[branch]['status'] != 'SUCCESS' and
+                runtime_settings.pipeline_fail_policy == 'fail_fast'):
+                print('[ERROR] fail_fast policy triggered')
+                fail_fast_triggered = True
+                break
+    if fail_fast_triggered:
+        write_pipeline_summary(args.info_dir, runtime_settings,
+                               branch_results, 'FAILURE',
+                               stage_metrics=stage_metrics)
+        return 1
 
     success_count = sum(1 for r in branch_results.values()
                         if r['status'] == 'SUCCESS')
@@ -463,8 +632,10 @@ def run_pipeline_mode(args, single_fcst_mode):
         exit_code = 1
 
     print('[INFO] Stage 4/4: Finalize')
+    with record_pipeline_stage(stage_metrics, 'stage_4_finalize'):
+        pass
     write_pipeline_summary(args.info_dir, runtime_settings, branch_results,
-                           final_status)
+                           final_status, stage_metrics=stage_metrics)
     if final_status == 'SUCCESS':
         print('\n[SUCCESS] Pipeline completed successfully')
     elif final_status == 'PARTIAL_FAILURE':
