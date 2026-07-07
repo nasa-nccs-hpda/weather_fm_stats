@@ -33,10 +33,13 @@ def _resolve_dataset_workers(runtime_settings, num_chunks):
 
 def _finish_timing(timings, name, start_time):
     '''Append one elapsed-time record.'''
+    wall_seconds = round(time.time() - start_time, 2)
     timings.append({
         'name': name,
-        'wall_seconds': round(time.time() - start_time, 2),
+        'wall_seconds': wall_seconds,
     })
+    print(f'[TIMING] Dataset step {name}: wall_seconds={wall_seconds}',
+          flush=True)
 
 
 def _chunk_log_prefix(dataset_type):
@@ -528,6 +531,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                                                      single_fcst_mode)
     process_fcst = bool(base_processor.fcst_model and
                         base_processor.fcst_model.strip())
+    fcst_start = time.time()
 
     chunk_results = []
     forecast_results = {
@@ -541,6 +545,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
             base_processor.config['FDATES'], spacing, [])
         total_dates = len(init_dates_full)
         if total_dates == 0:
+            _finish_timing(timings, 'fcst_total', fcst_start)
             _finish_timing(timings, 'source_dataset_build_total',
                            source_start)
             return {
@@ -577,6 +582,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
             )
         if not required_chunks:
             write_chunk_plan(plan_path, chunk_specs)
+            _finish_timing(timings, 'fcst_total', fcst_start)
             _finish_timing(timings, 'source_dataset_build_total',
                            source_start)
             return {
@@ -616,6 +622,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         write_chunk_plan(plan_path, chunk_specs)
 
         if chunk_failures:
+            _finish_timing(timings, 'fcst_total', fcst_start)
             _finish_timing(timings, 'source_dataset_build_total',
                            source_start)
             return {
@@ -631,6 +638,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                 info_dir, save_for_coll_merge=False,
                 chunk_specs=chunk_specs):
             _finish_timing(timings, 'fcst_chunk_merge', merge_start)
+            _finish_timing(timings, 'fcst_total', fcst_start)
             _finish_timing(timings, 'source_dataset_build_total',
                            source_start)
             return {
@@ -640,6 +648,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                 'timings': timings,
             }
         _finish_timing(timings, 'fcst_chunk_merge', merge_start)
+        _finish_timing(timings, 'fcst_total', fcst_start)
         forecast_results['datasets']['fcst'] = True
     elif process_fcst:
         check_start = time.time()
@@ -654,6 +663,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
             forecast_results['existing_datasets']['fcst'] = (
                 existing_datasets_check['fcst'])
         _finish_timing(timings, 'fcst_existing_dataset_check', check_start)
+        _finish_timing(timings, 'fcst_total', fcst_start)
 
     ana_results = _run_time_dataset_build(
         config_path, info_dir, runtime_settings, 'ana',
