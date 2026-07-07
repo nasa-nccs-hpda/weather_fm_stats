@@ -21,7 +21,7 @@ parameters:
     # conservative defaults for single-job pipeline parallelism
     pipeline_max_workers_dataset_fcst: 8
     pipeline_max_workers_dataset_ana: 8
-    pipeline_max_workers_dataset_clim: 4
+    pipeline_max_workers_dataset_clim: 2
     pipeline_max_workers_stats_regional: 4
     pipeline_max_workers_stats_global: 4
     pipeline_chunk_size_fcst: 1
