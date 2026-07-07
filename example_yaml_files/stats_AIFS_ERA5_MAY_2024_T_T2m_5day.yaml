@@ -26,7 +26,7 @@ parameters:
     pipeline_max_workers_stats_global: 4
     pipeline_chunk_size_fcst: 1
     pipeline_chunk_size_ana: 4
-    pipeline_chunk_size_clim: 4
+    pipeline_chunk_size_clim: 2
     pipeline_chunk_size_stats: 2
     # optional location(s) to search for pre-existing processed fcst/ana/clim datasets [comma-separated list]
     # dir_loc: [/path/to/loc1, /path/to/loc2]

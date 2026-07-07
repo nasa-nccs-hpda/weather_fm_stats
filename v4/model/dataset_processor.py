@@ -1,5 +1,14 @@
 ﻿'''Dataset processing model.'''
 
+import warnings
+
+warnings.filterwarnings(
+    'ignore',
+    message='Latitude is outside of \\[-90, 90\\]',
+    category=UserWarning,
+    module='xesmf.backend',
+)
+
 import calendar
 import gc
 import glob
@@ -699,6 +708,21 @@ class BatchDatasetProcessor:
                 print(f'    [ERROR] Regridder creation failed: {e}')
                 return None
         return self.regridders[regridder_key]
+
+    def _make_regrid_input_contiguous(self, data_array):
+        '''Return a C-contiguous DataArray for xESMF regridding.'''
+        values = data_array.data
+        try:
+            if hasattr(values, 'flags') and values.flags['C_CONTIGUOUS']:
+                return data_array
+            contiguous_values = np.ascontiguousarray(values)
+            return xr.DataArray(contiguous_values,
+                                coords=data_array.coords,
+                                dims=data_array.dims,
+                                attrs=data_array.attrs,
+                                name=data_array.name)
+        except Exception:
+            return data_array
 
     def _get_file_by_templates(self, templates: List[str], base_dir: str,
                                date_vars: Dict[str, str], context_info: str,
@@ -1605,8 +1629,10 @@ class BatchDatasetProcessor:
                             and dep_var not in regridded_vars):
                             dep_source = dep_info['alias']
                             try:
-                                regridded_data = regridder(
-                                    ds_levels[dep_source])
+                                regrid_input = (
+                                    self._make_regrid_input_contiguous(
+                                        ds_levels[dep_source]))
+                                regridded_data = regridder(regrid_input)
                                 if 'time' in regridded_data.coords:
                                     regridded_data = (
                                         regridded_data.assign_coords(
@@ -1624,7 +1650,9 @@ class BatchDatasetProcessor:
                                                  f'{target_var}: {str(e)}')
                 continue  # Skip the calculated variable itself
             try:
-                regridded_data = regridder(ds_levels[source_var])
+                regrid_input = self._make_regrid_input_contiguous(
+                    ds_levels[source_var])
+                regridded_data = regridder(regrid_input)
                 if 'time' in regridded_data.coords:
                     regridded_data = (
                         regridded_data.assign_coords(time=std_coords))
