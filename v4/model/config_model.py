@@ -36,10 +36,15 @@ class RuntimeSettings:
     pipeline_resume_mode: str
     pipeline_summary_file: str
     pipeline_max_workers_dataset: int
+    pipeline_max_workers_dataset_fcst: int
+    pipeline_max_workers_dataset_ana: int
+    pipeline_max_workers_dataset_clim: int
     pipeline_chunk_size_fcst: int
     pipeline_chunk_size_ana: int
     pipeline_chunk_size_clim: int
     pipeline_max_workers_stats: int
+    pipeline_max_workers_stats_regional: int
+    pipeline_max_workers_stats_global: int
     pipeline_chunk_size_stats: int
 
 
@@ -84,25 +89,50 @@ def resolve_runtime_settings(args, config):
         config.get('pipeline_max_workers_dataset'),
         None,
     )
+    pipeline_max_workers_dataset_fcst = _resolve_setting(
+        getattr(args, 'pipeline_max_workers_dataset_fcst', None),
+        config.get('pipeline_max_workers_dataset_fcst'),
+        pipeline_max_workers_dataset if pipeline_max_workers_dataset else 8,
+    )
+    pipeline_max_workers_dataset_ana = _resolve_setting(
+        getattr(args, 'pipeline_max_workers_dataset_ana', None),
+        config.get('pipeline_max_workers_dataset_ana'),
+        pipeline_max_workers_dataset if pipeline_max_workers_dataset else 8,
+    )
+    pipeline_max_workers_dataset_clim = _resolve_setting(
+        getattr(args, 'pipeline_max_workers_dataset_clim', None),
+        config.get('pipeline_max_workers_dataset_clim'),
+        pipeline_max_workers_dataset if pipeline_max_workers_dataset else 4,
+    )
     pipeline_chunk_size_fcst = _resolve_setting(
         getattr(args, 'pipeline_chunk_size_fcst', None),
         config.get('pipeline_chunk_size_fcst'),
-        2,
+        1,
     )
     pipeline_chunk_size_ana = _resolve_setting(
         getattr(args, 'pipeline_chunk_size_ana', None),
         config.get('pipeline_chunk_size_ana'),
-        pipeline_chunk_size_fcst,
+        4,
     )
     pipeline_chunk_size_clim = _resolve_setting(
         getattr(args, 'pipeline_chunk_size_clim', None),
         config.get('pipeline_chunk_size_clim'),
-        pipeline_chunk_size_fcst,
+        4,
     )
     pipeline_max_workers_stats = _resolve_setting(
         getattr(args, 'pipeline_max_workers_stats', None),
         config.get('pipeline_max_workers_stats'),
         None,
+    )
+    pipeline_max_workers_stats_regional = _resolve_setting(
+        getattr(args, 'pipeline_max_workers_stats_regional', None),
+        config.get('pipeline_max_workers_stats_regional'),
+        pipeline_max_workers_stats if pipeline_max_workers_stats else 4,
+    )
+    pipeline_max_workers_stats_global = _resolve_setting(
+        getattr(args, 'pipeline_max_workers_stats_global', None),
+        config.get('pipeline_max_workers_stats_global'),
+        pipeline_max_workers_stats if pipeline_max_workers_stats else 4,
     )
     pipeline_chunk_size_stats = _resolve_setting(
         getattr(args, 'pipeline_chunk_size_stats', None),
@@ -147,6 +177,33 @@ def resolve_runtime_settings(args, config):
             raise ValueError('pipeline_max_workers_dataset must be >= 1')
 
     try:
+        pipeline_max_workers_dataset_fcst = int(
+            pipeline_max_workers_dataset_fcst)
+    except (TypeError, ValueError):
+        raise ValueError(
+            'pipeline_max_workers_dataset_fcst must be an integer')
+    if pipeline_max_workers_dataset_fcst < 1:
+        raise ValueError('pipeline_max_workers_dataset_fcst must be >= 1')
+
+    try:
+        pipeline_max_workers_dataset_ana = int(
+            pipeline_max_workers_dataset_ana)
+    except (TypeError, ValueError):
+        raise ValueError(
+            'pipeline_max_workers_dataset_ana must be an integer')
+    if pipeline_max_workers_dataset_ana < 1:
+        raise ValueError('pipeline_max_workers_dataset_ana must be >= 1')
+
+    try:
+        pipeline_max_workers_dataset_clim = int(
+            pipeline_max_workers_dataset_clim)
+    except (TypeError, ValueError):
+        raise ValueError(
+            'pipeline_max_workers_dataset_clim must be an integer')
+    if pipeline_max_workers_dataset_clim < 1:
+        raise ValueError('pipeline_max_workers_dataset_clim must be >= 1')
+
+    try:
         pipeline_chunk_size_fcst = int(pipeline_chunk_size_fcst)
     except (TypeError, ValueError):
         raise ValueError('pipeline_chunk_size_fcst must be an integer')
@@ -176,6 +233,24 @@ def resolve_runtime_settings(args, config):
             raise ValueError('pipeline_max_workers_stats must be >= 1')
 
     try:
+        pipeline_max_workers_stats_regional = int(
+            pipeline_max_workers_stats_regional)
+    except (TypeError, ValueError):
+        raise ValueError(
+            'pipeline_max_workers_stats_regional must be an integer')
+    if pipeline_max_workers_stats_regional < 1:
+        raise ValueError('pipeline_max_workers_stats_regional must be >= 1')
+
+    try:
+        pipeline_max_workers_stats_global = int(
+            pipeline_max_workers_stats_global)
+    except (TypeError, ValueError):
+        raise ValueError(
+            'pipeline_max_workers_stats_global must be an integer')
+    if pipeline_max_workers_stats_global < 1:
+        raise ValueError('pipeline_max_workers_stats_global must be >= 1')
+
+    try:
         pipeline_chunk_size_stats = int(pipeline_chunk_size_stats)
     except (TypeError, ValueError):
         raise ValueError('pipeline_chunk_size_stats must be an integer')
@@ -189,9 +264,15 @@ def resolve_runtime_settings(args, config):
         pipeline_resume_mode=pipeline_resume_mode,
         pipeline_summary_file=pipeline_summary_file,
         pipeline_max_workers_dataset=pipeline_max_workers_dataset,
+        pipeline_max_workers_dataset_fcst=pipeline_max_workers_dataset_fcst,
+        pipeline_max_workers_dataset_ana=pipeline_max_workers_dataset_ana,
+        pipeline_max_workers_dataset_clim=pipeline_max_workers_dataset_clim,
         pipeline_chunk_size_fcst=pipeline_chunk_size_fcst,
         pipeline_chunk_size_ana=pipeline_chunk_size_ana,
         pipeline_chunk_size_clim=pipeline_chunk_size_clim,
         pipeline_max_workers_stats=pipeline_max_workers_stats,
+        pipeline_max_workers_stats_regional=(
+            pipeline_max_workers_stats_regional),
+        pipeline_max_workers_stats_global=pipeline_max_workers_stats_global,
         pipeline_chunk_size_stats=pipeline_chunk_size_stats,
     )

@@ -23,7 +23,7 @@ def get_current_memory_mb():
     return round(max_rss / 1024, 2)
 
 
-def _resolve_stats_workers(runtime_settings, num_chunks):
+def _resolve_stats_workers(runtime_settings, num_chunks, stats_kind=None):
     '''Resolve stats worker count conservatively for memory-heavy work.'''
     slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK')
     if slurm_cpus:
@@ -35,6 +35,10 @@ def _resolve_stats_workers(runtime_settings, num_chunks):
         default_workers = os.cpu_count() or 1
 
     configured_workers = runtime_settings.pipeline_max_workers_stats
+    if stats_kind == 'regional':
+        configured_workers = runtime_settings.pipeline_max_workers_stats_regional
+    elif stats_kind == 'global':
+        configured_workers = runtime_settings.pipeline_max_workers_stats_global
     if configured_workers:
         max_workers = configured_workers
     else:
@@ -156,7 +160,8 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
         }
 
     max_workers = _resolve_stats_workers(runtime_settings,
-                                         len(required_chunks))
+                                         len(required_chunks),
+                                         stats_kind=stats_kind)
     print(f'[INFO] {stats_kind} stats chunking plan: '
           f'{len(chunk_specs)} chunk(s), {len(required_chunks)} required, '
           f'{len(skipped_chunks)} skipped, '

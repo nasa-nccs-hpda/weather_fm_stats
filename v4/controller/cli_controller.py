@@ -167,6 +167,12 @@ def parse_arguments():
                         help='Pipeline summary filename in output directory')
     parser.add_argument('--pipeline_max_workers_dataset', type=int,
                         help='Maximum worker processes for dataset build stage')
+    parser.add_argument('--pipeline_max_workers_dataset_fcst', type=int,
+                        help='Maximum worker processes for forecast dataset chunks')
+    parser.add_argument('--pipeline_max_workers_dataset_ana', type=int,
+                        help='Maximum worker processes for analysis dataset chunks')
+    parser.add_argument('--pipeline_max_workers_dataset_clim', type=int,
+                        help='Maximum worker processes for climatology dataset chunks')
     parser.add_argument('--pipeline_chunk_size_fcst', type=int,
                         help='Forecast init-date chunk size for dataset parallelism')
     parser.add_argument('--pipeline_chunk_size_ana', type=int,
@@ -175,6 +181,10 @@ def parse_arguments():
                         help='Climatology valid-time chunk size for dataset parallelism')
     parser.add_argument('--pipeline_max_workers_stats', type=int,
                         help='Maximum worker processes for statistics stage')
+    parser.add_argument('--pipeline_max_workers_stats_regional', type=int,
+                        help='Maximum worker processes for regional statistics')
+    parser.add_argument('--pipeline_max_workers_stats_global', type=int,
+                        help='Maximum worker processes for global statistics')
     parser.add_argument('--pipeline_chunk_size_stats', type=int,
                         help='Statistics init-date chunk size')
     # Processing options
@@ -403,10 +413,15 @@ def print_runtime_contract(runtime_settings):
     print(f'  resume_mode={runtime_settings.pipeline_resume_mode}')
     print(f'  summary_file={runtime_settings.pipeline_summary_file}')
     print(f'  max_workers_dataset={runtime_settings.pipeline_max_workers_dataset}')
+    print(f'  max_workers_dataset_fcst={runtime_settings.pipeline_max_workers_dataset_fcst}')
+    print(f'  max_workers_dataset_ana={runtime_settings.pipeline_max_workers_dataset_ana}')
+    print(f'  max_workers_dataset_clim={runtime_settings.pipeline_max_workers_dataset_clim}')
     print(f'  chunk_size_fcst={runtime_settings.pipeline_chunk_size_fcst}')
     print(f'  chunk_size_ana={runtime_settings.pipeline_chunk_size_ana}')
     print(f'  chunk_size_clim={runtime_settings.pipeline_chunk_size_clim}')
     print(f'  max_workers_stats={runtime_settings.pipeline_max_workers_stats}')
+    print(f'  max_workers_stats_regional={runtime_settings.pipeline_max_workers_stats_regional}')
+    print(f'  max_workers_stats_global={runtime_settings.pipeline_max_workers_stats_global}')
     print(f'  chunk_size_stats={runtime_settings.pipeline_chunk_size_stats}')
 
 

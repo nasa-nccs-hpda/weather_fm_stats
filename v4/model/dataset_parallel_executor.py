@@ -14,7 +14,8 @@ from model.chunk_plan import (
 from model.dataset_processor import BatchDatasetProcessor
 
 
-def _resolve_dataset_workers(runtime_settings, num_chunks):
+def _resolve_dataset_workers(runtime_settings, num_chunks,
+                             dataset_type=None):
     '''Resolve worker count using runtime settings and SLURM CPU context.'''
     slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK')
     if slurm_cpus:
@@ -26,6 +27,12 @@ def _resolve_dataset_workers(runtime_settings, num_chunks):
         default_workers = os.cpu_count() or 1
 
     configured_workers = runtime_settings.pipeline_max_workers_dataset
+    if dataset_type == 'fcst':
+        configured_workers = runtime_settings.pipeline_max_workers_dataset_fcst
+    elif dataset_type == 'ana':
+        configured_workers = runtime_settings.pipeline_max_workers_dataset_ana
+    elif dataset_type == 'clim':
+        configured_workers = runtime_settings.pipeline_max_workers_dataset_clim
     max_workers = configured_workers if configured_workers else default_workers
     max_workers = max(1, min(max_workers, num_chunks))
     return max_workers
@@ -513,7 +520,8 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
         }
 
     max_workers = _resolve_dataset_workers(runtime_settings,
-                                           len(required_chunks))
+                                           len(required_chunks),
+                                           dataset_type=dataset_type)
     print(f'[INFO] {dataset_type.upper()} chunking plan: '
           f'{len(chunk_specs)} chunk(s), {len(required_chunks)} required, '
           f'{len(skipped_chunks)} skipped, chunk_size={chunk_size}, '
@@ -646,7 +654,8 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
             }
 
         max_workers = _resolve_dataset_workers(runtime_settings,
-                                               len(required_chunks))
+                                               len(required_chunks),
+                                               dataset_type='fcst')
 
         print(f'[INFO] Forecast chunking plan: {len(chunk_specs)} chunk(s), '
               f'{len(required_chunks)} required, '
