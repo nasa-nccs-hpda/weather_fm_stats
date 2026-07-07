@@ -31,15 +31,67 @@ def _resolve_dataset_workers(runtime_settings, num_chunks):
     return max_workers
 
 
-def _finish_timing(timings, name, start_time):
-    '''Append one elapsed-time record.'''
-    wall_seconds = round(time.time() - start_time, 2)
+def _cpu_total_seconds():
+    '''Return self + completed child CPU seconds.'''
+    times = os.times()
+    return round(
+        times.user + times.system + times.children_user +
+        times.children_system,
+        4,
+    )
+
+
+def _allocated_cpu_count():
+    '''Return SLURM CPU allocation when present, otherwise local CPU count.'''
+    slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK')
+    if slurm_cpus:
+        try:
+            return max(1, int(slurm_cpus))
+        except ValueError:
+            pass
+    return os.cpu_count() or 1
+
+
+def _start_timing():
+    '''Capture wall and CPU counters for one timing span.'''
+    return {
+        'wall': time.time(),
+        'cpu': _cpu_total_seconds(),
+        'allocated_cpus': _allocated_cpu_count(),
+    }
+
+
+def _finish_timing(timings, name, start_marker):
+    '''Append one elapsed-time and CPU-use record.'''
+    if isinstance(start_marker, dict):
+        start_wall = start_marker['wall']
+        start_cpu = start_marker['cpu']
+        allocated_cpus = start_marker['allocated_cpus']
+    else:
+        start_wall = start_marker
+        start_cpu = None
+        allocated_cpus = _allocated_cpu_count()
+
+    wall_seconds = round(time.time() - start_wall, 2)
+    cpu_seconds = None
+    cpu_percent_of_allocation = None
+    if start_cpu is not None:
+        cpu_seconds = round(_cpu_total_seconds() - start_cpu, 2)
+        if wall_seconds > 0 and allocated_cpus:
+            cpu_percent_of_allocation = round(
+                (cpu_seconds / (wall_seconds * allocated_cpus)) * 100, 2)
+
     timings.append({
         'name': name,
         'wall_seconds': wall_seconds,
+        'cpu_seconds': cpu_seconds,
+        'cpu_percent_of_allocation': cpu_percent_of_allocation,
+        'allocated_cpus': allocated_cpus,
     })
-    print(f'[TIMING] Dataset step {name}: wall_seconds={wall_seconds}',
-          flush=True)
+    print(f'[TIMING] Dataset step {name}: wall_seconds={wall_seconds} '
+          f'cpu_seconds={cpu_seconds} '
+          f'cpu_pct_of_alloc={cpu_percent_of_allocation} '
+          f'allocated_cpus={allocated_cpus}', flush=True)
 
 
 def _chunk_log_prefix(dataset_type):
@@ -376,7 +428,7 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
                             dataset_type, single_fcst_mode=None):
     '''Run analysis or climatology build in deterministic valid-time chunks.'''
     timings = []
-    overall_start = time.time()
+    overall_start = _start_timing()
     base_processor = BatchDatasetProcessor.from_yaml(config_path,
                                                      single_fcst_mode)
     process_dataset = bool(getattr(base_processor, f'{dataset_type}_model')
@@ -392,7 +444,7 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
             'timings': timings,
         }
 
-    check_start = time.time()
+    check_start = _start_timing()
     if not _dataset_needs_processing(config_path, info_dir, single_fcst_mode,
                                      dataset_type):
         _finish_timing(timings, f'{dataset_type}_existing_dataset_check',
@@ -467,7 +519,7 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
           f'{len(skipped_chunks)} skipped, chunk_size={chunk_size}, '
           f'max_workers={max_workers}')
 
-    chunk_start = time.time()
+    chunk_start = _start_timing()
     new_results, chunk_failures = _run_required_chunks(
         required_chunks,
         _run_time_chunk_worker,
@@ -495,7 +547,7 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
             'timings': timings,
         }
 
-    merge_start = time.time()
+    merge_start = _start_timing()
     if not base_processor.merge_time_chunks(dataset_type, info_dir,
                                             chunk_specs):
         _finish_timing(timings, f'{dataset_type}_chunk_merge', merge_start)
@@ -526,12 +578,12 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                                       single_fcst_mode=None):
     '''Run source dataset build with parallel forecast chunk processing.'''
     timings = []
-    source_start = time.time()
+    source_start = _start_timing()
     base_processor = BatchDatasetProcessor.from_yaml(config_path,
                                                      single_fcst_mode)
     process_fcst = bool(base_processor.fcst_model and
                         base_processor.fcst_model.strip())
-    fcst_start = time.time()
+    fcst_start = _start_timing()
 
     chunk_results = []
     forecast_results = {
@@ -602,7 +654,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
               f'chunk_size={runtime_settings.pipeline_chunk_size_fcst}, '
               f'max_workers={max_workers}')
 
-        chunk_start = time.time()
+        chunk_start = _start_timing()
         new_results, chunk_failures = _run_required_chunks(
             required_chunks,
             _run_fcst_chunk_worker,
@@ -633,7 +685,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                 'timings': timings,
             }
 
-        merge_start = time.time()
+        merge_start = _start_timing()
         if not base_processor.merge_forecast_chunks(
                 info_dir, save_for_coll_merge=False,
                 chunk_specs=chunk_specs):
@@ -651,7 +703,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         _finish_timing(timings, 'fcst_total', fcst_start)
         forecast_results['datasets']['fcst'] = True
     elif process_fcst:
-        check_start = time.time()
+        check_start = _start_timing()
         print('[INFO] Forecast dataset already valid; skipping forecast '
               'chunk processing')
         temp_processor = BatchDatasetProcessor.from_yaml(config_path,

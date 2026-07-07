@@ -520,6 +520,12 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
             for timing in dataset_timings:
                 f.write(f'{timing["name"]}_wall_seconds: '
                         f'{timing["wall_seconds"]}\n')
+                f.write(f'{timing["name"]}_cpu_seconds: '
+                        f'{timing.get("cpu_seconds")}\n')
+                f.write(f'{timing["name"]}_cpu_percent_of_allocation: '
+                        f'{timing.get("cpu_percent_of_allocation")}\n')
+                f.write(f'{timing["name"]}_allocated_cpus: '
+                        f'{timing.get("allocated_cpus")}\n')
     print(f'[INFO] Pipeline summary written: {summary_path}')
     print('[INFO] Pipeline final summary:')
     for branch_name, branch_result in branch_results.items():
@@ -548,7 +554,11 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
         print('  dataset timing:')
         for timing in dataset_timings:
             print(f'    {timing["name"]}: '
-                  f'wall={timing["wall_seconds"]}s')
+                  f'wall={timing["wall_seconds"]}s '
+                  f'cpu={timing.get("cpu_seconds")}s '
+                  f'cpu_pct_alloc='
+                  f'{timing.get("cpu_percent_of_allocation")} '
+                  f'allocated_cpus={timing.get("allocated_cpus")}')
 
 
 def run_pipeline_mode(args, single_fcst_mode):
