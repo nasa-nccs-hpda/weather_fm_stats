@@ -100,6 +100,13 @@ Validation Notes
 - HPC validation should test regional/global statistics worker counts and
   pipeline_chunk_size_stats values to identify faster stable settings,
   especially for global statistics.
+- HPC testing showed regional chunks completing in a tight cluster when using
+  four large chunks. This suggests smaller statistics chunks with a higher
+  worker count may improve CPU utilization and reduce tail latency, if memory
+  remains stable.
+- HPC testing showed similar chunk completion behavior for global statistics,
+  so global tuning should also compare smaller chunk sizes and higher worker
+  counts.
 
 Known Limits After This Step
 - Step 8 improves branch observability and serial failure isolation, but it does
@@ -108,6 +115,9 @@ Known Limits After This Step
   latest full-pipeline run.
 - Child-process CPU and memory accounting remains limited until the Step 10
   logging/resource-accounting work.
+- Regional scorecard file generation still runs as part of regional statistics.
+  A later change should make scorecard output optional so regional NetCDF stats
+  can be generated without always writing scorecard files.
 
 Future Refactor Note
 - Concurrent regional/global branch execution should be considered for a future

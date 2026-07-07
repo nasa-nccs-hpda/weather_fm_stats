@@ -52,6 +52,8 @@
 10. Improve logging for parallel processing (Estimated LOC: 80-180)
   - Reduce normal-case output verbosity so successful runs are easier to scan.
   - Do not print detailed validation output when validation passes normally; reserve details for warnings, failures, debug mode, or explicit verbose output.
+  - Organize normal pipeline logs into clear forecast, analysis, climatology, regional statistics, and global statistics sections because these stages run serially.
+  - Consolidate repeated normal-case messages within each section, including YAML initialization, batch forecast processing headers, target-grid creation, existing-dataset checks, and validation checks.
   - Add simple, readable progress messages for parallel dataset and statistics workers, including queued, started, completed, skipped, and failed chunks.
   - Include timing summaries and counts of completed, skipped, and failed chunks by dataset/statistics branch.
   - Record pipeline start time, finish time, and elapsed wall time in logs and run_summary.txt.
