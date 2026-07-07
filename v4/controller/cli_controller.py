@@ -439,7 +439,8 @@ def run_stats_branch(stats_kind, processor_config, dataset_files, init_dates,
 
 
 def write_pipeline_summary(info_dir, runtime_settings, branch_results,
-                           final_status, stage_metrics=None):
+                           final_status, stage_metrics=None,
+                           dataset_timings=None):
     '''Write run summary file for pipeline mode.'''
     if not info_dir:
         return
@@ -449,6 +450,7 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
                                 runtime_settings.pipeline_summary_file)
     pipeline_max_memory = None
     stage_metrics = stage_metrics or []
+    dataset_timings = dataset_timings or []
     with open(summary_path, 'w', encoding='utf-8') as f:
         f.write('v4 pipeline summary\n')
         f.write(f'final_status: {final_status}\n')
@@ -476,6 +478,9 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
             if branch_result.get('max_memory_mb') is not None:
                 f.write(f'{branch_name}_max_memory_mb: '
                         f'{branch_result["max_memory_mb"]}\n')
+            if branch_result.get('wall_seconds') is not None:
+                f.write(f'{branch_name}_wall_seconds: '
+                        f'{branch_result["wall_seconds"]}\n')
         branch_memory = [
             result.get('max_memory_mb') for result in branch_results.values()
             if result.get('max_memory_mb') is not None
@@ -510,6 +515,11 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
                         f'{metric["children_max_rss_mb"]}\n')
                 f.write(f'{prefix}_slurm_mem_mb: '
                         f'{metric["slurm_mem_mb"]}\n')
+        if dataset_timings:
+            f.write('\ndataset_timing_summary:\n')
+            for timing in dataset_timings:
+                f.write(f'{timing["name"]}_wall_seconds: '
+                        f'{timing["wall_seconds"]}\n')
     print(f'[INFO] Pipeline summary written: {summary_path}')
     print('[INFO] Pipeline final summary:')
     for branch_name, branch_result in branch_results.items():
@@ -522,6 +532,8 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
             print(f'    max_workers={branch_result["max_workers"]}')
         if branch_result.get('max_memory_mb') is not None:
             print(f'    max_memory_mb={branch_result["max_memory_mb"]}')
+        if branch_result.get('wall_seconds') is not None:
+            print(f'    wall_seconds={branch_result["wall_seconds"]}')
     if pipeline_max_memory is not None:
         print(f'  pipeline_max_memory_mb={pipeline_max_memory}')
     if stage_metrics:
@@ -532,6 +544,11 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
                   f'cpu={metric["cpu_seconds"]}s '
                   f'cpu_pct_alloc={metric["cpu_percent_of_allocation"]} '
                   f'max_rss_mb={metric["max_rss_mb"]}')
+    if dataset_timings:
+        print('  dataset timing:')
+        for timing in dataset_timings:
+            print(f'    {timing["name"]}: '
+                  f'wall={timing["wall_seconds"]}s')
 
 
 def run_pipeline_mode(args, single_fcst_mode):
@@ -559,6 +576,7 @@ def run_pipeline_mode(args, single_fcst_mode):
             runtime_settings,
             single_fcst_mode=single_fcst_mode,
         )
+    dataset_timings = results.get('timings', [])
 
     if results.get('status') != 'success':
         reason = results.get('reason', 'Unknown error')
@@ -566,7 +584,8 @@ def run_pipeline_mode(args, single_fcst_mode):
         for err in results.get('errors', []):
             print(f'  [ERROR] {err}')
         write_pipeline_summary(args.info_dir, runtime_settings, {},
-                               'FAILURE', stage_metrics=stage_metrics)
+                               'FAILURE', stage_metrics=stage_metrics,
+                               dataset_timings=dataset_timings)
         return 1
 
     dataset_files = results.get('dataset_files', {})
@@ -579,12 +598,14 @@ def run_pipeline_mode(args, single_fcst_mode):
         print(f'[ERROR] Missing datasets for stats: '
               f'{", ".join(sorted(missing_datasets))}')
         write_pipeline_summary(args.info_dir, runtime_settings, {},
-                               'FAILURE', stage_metrics=stage_metrics)
+                               'FAILURE', stage_metrics=stage_metrics,
+                               dataset_timings=dataset_timings)
         return 1
     if not init_dates or not leads:
         print('[ERROR] Missing init dates or lead times for statistics')
         write_pipeline_summary(args.info_dir, runtime_settings, {},
-                               'FAILURE', stage_metrics=stage_metrics)
+                               'FAILURE', stage_metrics=stage_metrics,
+                               dataset_timings=dataset_timings)
         return 1
     print(f'[INFO] RESULTS FROM STAGE 2 (datasets): {dataset_files}')
 
@@ -605,9 +626,12 @@ def run_pipeline_mode(args, single_fcst_mode):
     with record_pipeline_stage(stage_metrics, 'stage_3_statistics_branches'):
         for branch in requested_branches:
             print(f'[INFO] Running {branch} statistics branch...')
+            branch_start = time.time()
             branch_results[branch] = run_stats_branch(
                 branch, processor.config, dataset_files, init_dates, leads,
                 args.info_dir, runtime_settings=runtime_settings)
+            branch_results[branch]['wall_seconds'] = round(
+                time.time() - branch_start, 2)
             if (branch_results[branch]['status'] != 'SUCCESS' and
                 runtime_settings.pipeline_fail_policy == 'fail_fast'):
                 print('[ERROR] fail_fast policy triggered')
@@ -616,7 +640,8 @@ def run_pipeline_mode(args, single_fcst_mode):
     if fail_fast_triggered:
         write_pipeline_summary(args.info_dir, runtime_settings,
                                branch_results, 'FAILURE',
-                               stage_metrics=stage_metrics)
+                               stage_metrics=stage_metrics,
+                               dataset_timings=dataset_timings)
         return 1
 
     success_count = sum(1 for r in branch_results.values()
@@ -635,7 +660,8 @@ def run_pipeline_mode(args, single_fcst_mode):
     with record_pipeline_stage(stage_metrics, 'stage_4_finalize'):
         pass
     write_pipeline_summary(args.info_dir, runtime_settings, branch_results,
-                           final_status, stage_metrics=stage_metrics)
+                           final_status, stage_metrics=stage_metrics,
+                           dataset_timings=dataset_timings)
     if final_status == 'SUCCESS':
         print('\n[SUCCESS] Pipeline completed successfully')
     elif final_status == 'PARTIAL_FAILURE':

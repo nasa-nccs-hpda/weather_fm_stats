@@ -1,6 +1,7 @@
 '''Dataset parallel execution helpers for v4 pipeline mode.'''
 
 import os
+import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -28,6 +29,14 @@ def _resolve_dataset_workers(runtime_settings, num_chunks):
     max_workers = configured_workers if configured_workers else default_workers
     max_workers = max(1, min(max_workers, num_chunks))
     return max_workers
+
+
+def _finish_timing(timings, name, start_time):
+    '''Append one elapsed-time record.'''
+    timings.append({
+        'name': name,
+        'wall_seconds': round(time.time() - start_time, 2),
+    })
 
 
 def _run_fcst_chunk_worker(config_path, info_dir, chunk_spec,
@@ -299,21 +308,28 @@ def _run_required_chunks(required_chunks, worker_func, worker_args):
 def _run_time_dataset_build(config_path, info_dir, runtime_settings,
                             dataset_type, single_fcst_mode=None):
     '''Run analysis or climatology build in deterministic valid-time chunks.'''
+    timings = []
+    overall_start = time.time()
     base_processor = BatchDatasetProcessor.from_yaml(config_path,
                                                      single_fcst_mode)
     process_dataset = bool(getattr(base_processor, f'{dataset_type}_model')
                            and getattr(base_processor,
                                        f'{dataset_type}_model').strip())
     if not process_dataset:
+        _finish_timing(timings, f'{dataset_type}_total', overall_start)
         return {
             'status': 'success',
             'dataset_files': {},
             'existing_datasets': {},
             'chunk_results': [],
+            'timings': timings,
         }
 
+    check_start = time.time()
     if not _dataset_needs_processing(config_path, info_dir, single_fcst_mode,
                                      dataset_type):
+        _finish_timing(timings, f'{dataset_type}_existing_dataset_check',
+                       check_start)
         print(f'[INFO] {dataset_type.upper()} dataset already valid; '
               f'skipping {dataset_type} chunk processing')
         existing_datasets_check = base_processor._check_for_existing_datasets()
@@ -323,19 +339,25 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
             dataset_files[dataset_type] = existing_datasets_check[dataset_type]
             existing_datasets[dataset_type] = existing_datasets_check[
                 dataset_type]
+        _finish_timing(timings, f'{dataset_type}_total', overall_start)
         return {
             'status': 'success',
             'dataset_files': dataset_files,
             'existing_datasets': existing_datasets,
             'chunk_results': [],
+            'timings': timings,
         }
+    _finish_timing(timings, f'{dataset_type}_existing_dataset_check',
+                   check_start)
 
     valid_times = _resolve_all_valid_times(base_processor)
     if not valid_times:
+        _finish_timing(timings, f'{dataset_type}_total', overall_start)
         return {
             'status': 'failed',
             'reason': f'no_{dataset_type}_valid_times',
             'chunk_results': [],
+            'timings': timings,
         }
 
     chunk_output_dir = os.path.join('outputs', str(info_dir), 'tmp')
@@ -363,10 +385,12 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
         _chunk_result_from_spec(chunk_spec) for chunk_spec in skipped_chunks
     ]
     if not required_chunks:
+        _finish_timing(timings, f'{dataset_type}_total', overall_start)
         return {
             'status': 'failed',
             'reason': f'no_{dataset_type}_chunks',
             'chunk_results': chunk_results,
+            'timings': timings,
         }
 
     max_workers = _resolve_dataset_workers(runtime_settings,
@@ -376,6 +400,7 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
           f'{len(skipped_chunks)} skipped, chunk_size={chunk_size}, '
           f'max_workers={max_workers}')
 
+    chunk_start = time.time()
     new_results, chunk_failures = _run_required_chunks(
         required_chunks,
         _run_time_chunk_worker,
@@ -387,25 +412,34 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
             'max_workers': max_workers,
         },
     )
+    _finish_timing(timings, f'{dataset_type}_chunk_execution', chunk_start)
     chunk_results.extend(new_results)
     chunk_results = sorted(chunk_results, key=lambda item: item['chunk_index'])
     write_chunk_plan(plan_path, chunk_specs)
 
     if chunk_failures:
+        _finish_timing(timings, f'{dataset_type}_total', overall_start)
         return {
             'status': 'failed',
             'reason': f'{dataset_type}_chunk_failures',
             'errors': chunk_failures,
             'chunk_results': chunk_results,
+            'timings': timings,
         }
 
+    merge_start = time.time()
     if not base_processor.merge_time_chunks(dataset_type, info_dir,
                                             chunk_specs):
+        _finish_timing(timings, f'{dataset_type}_chunk_merge', merge_start)
+        _finish_timing(timings, f'{dataset_type}_total', overall_start)
         return {
             'status': 'failed',
             'reason': f'{dataset_type}_chunk_merge_failed',
             'chunk_results': chunk_results,
+            'timings': timings,
         }
+    _finish_timing(timings, f'{dataset_type}_chunk_merge', merge_start)
+    _finish_timing(timings, f'{dataset_type}_total', overall_start)
 
     return {
         'status': 'success',
@@ -416,12 +450,15 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
         },
         'existing_datasets': {},
         'chunk_results': chunk_results,
+        'timings': timings,
     }
 
 
 def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                                       single_fcst_mode=None):
     '''Run source dataset build with parallel forecast chunk processing.'''
+    timings = []
+    source_start = time.time()
     base_processor = BatchDatasetProcessor.from_yaml(config_path,
                                                      single_fcst_mode)
     process_fcst = bool(base_processor.fcst_model and
@@ -439,10 +476,13 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
             base_processor.config['FDATES'], spacing, [])
         total_dates = len(init_dates_full)
         if total_dates == 0:
+            _finish_timing(timings, 'source_dataset_build_total',
+                           source_start)
             return {
                 'status': 'failed',
                 'reason': 'no_dates',
                 'chunk_results': chunk_results,
+                'timings': timings,
             }
 
         chunk_output_dir = os.path.join('outputs', str(info_dir), 'tmp')
@@ -472,11 +512,14 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
             )
         if not required_chunks:
             write_chunk_plan(plan_path, chunk_specs)
+            _finish_timing(timings, 'source_dataset_build_total',
+                           source_start)
             return {
                 'status': 'failed',
                 'reason': 'no_forecast_dates_after_exclusions',
                 'chunk_results': sorted(
                     chunk_results, key=lambda item: item['chunk_index']),
+                'timings': timings,
             }
 
         max_workers = _resolve_dataset_workers(runtime_settings,
@@ -489,6 +532,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
               f'max_workers={max_workers}')
 
         chunk_failures = []
+        chunk_start = time.time()
         if max_workers == 1:
             for chunk_spec in required_chunks:
                 try:
@@ -532,29 +576,40 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                         chunk_results.append(
                             _chunk_result_from_spec(
                                 chunk_spec, status='failed', error=str(exc)))
+        _finish_timing(timings, 'fcst_chunk_execution', chunk_start)
 
         chunk_results = sorted(
             chunk_results, key=lambda item: item['chunk_index'])
         write_chunk_plan(plan_path, chunk_specs)
 
         if chunk_failures:
+            _finish_timing(timings, 'source_dataset_build_total',
+                           source_start)
             return {
                 'status': 'failed',
                 'reason': 'forecast_chunk_failures',
                 'errors': chunk_failures,
                 'chunk_results': chunk_results,
+                'timings': timings,
             }
 
+        merge_start = time.time()
         if not base_processor.merge_forecast_chunks(
                 info_dir, save_for_coll_merge=False,
                 chunk_specs=chunk_specs):
+            _finish_timing(timings, 'fcst_chunk_merge', merge_start)
+            _finish_timing(timings, 'source_dataset_build_total',
+                           source_start)
             return {
                 'status': 'failed',
                 'reason': 'forecast_chunk_merge_failed',
                 'chunk_results': chunk_results,
+                'timings': timings,
             }
+        _finish_timing(timings, 'fcst_chunk_merge', merge_start)
         forecast_results['datasets']['fcst'] = True
     elif process_fcst:
+        check_start = time.time()
         print('[INFO] Forecast dataset already valid; skipping forecast '
               'chunk processing')
         temp_processor = BatchDatasetProcessor.from_yaml(config_path,
@@ -565,23 +620,30 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         if existing_datasets_check.get('fcst'):
             forecast_results['existing_datasets']['fcst'] = (
                 existing_datasets_check['fcst'])
+        _finish_timing(timings, 'fcst_existing_dataset_check', check_start)
 
     ana_results = _run_time_dataset_build(
         config_path, info_dir, runtime_settings, 'ana',
         single_fcst_mode=single_fcst_mode)
+    timings.extend(ana_results.get('timings', []))
     chunk_results.extend(ana_results.get('chunk_results', []))
     if ana_results.get('status') != 'success':
         ana_results['chunk_results'] = sorted(
             chunk_results, key=lambda item: item['chunk_index'])
+        _finish_timing(timings, 'source_dataset_build_total', source_start)
+        ana_results['timings'] = timings
         return ana_results
 
     clim_results = _run_time_dataset_build(
         config_path, info_dir, runtime_settings, 'clim',
         single_fcst_mode=single_fcst_mode)
+    timings.extend(clim_results.get('timings', []))
     chunk_results.extend(clim_results.get('chunk_results', []))
     if clim_results.get('status') != 'success':
         clim_results['chunk_results'] = sorted(
             chunk_results, key=lambda item: item['chunk_index'])
+        _finish_timing(timings, 'source_dataset_build_total', source_start)
+        clim_results['timings'] = timings
         return clim_results
 
     dataset_files = {}
@@ -598,6 +660,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         final_processor.config['FDATES'], spacing, exclude_dates)
     leads = final_processor._generate_leads(
         final_processor.config['FDAYS'], final_processor.config['NFREQ'])
+    _finish_timing(timings, 'source_dataset_build_total', source_start)
 
     return {
         'status': 'success',
@@ -609,5 +672,6 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         'init_dates': init_dates,
         'leads': leads,
         'chunk_results': chunk_results,
+        'timings': timings,
     }
 
