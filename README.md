@@ -16,6 +16,7 @@ chmod +x sbatch_stats_v4.run
 ```
 
 Example command:
+
 ```bash
 cd $NOBACKUP/weather_fm_stats/v4
 chmod +x sbatch_stats_v4.run
@@ -37,7 +38,7 @@ Example command:
 salloc --job-name=stats --time=8:00:00 --gres=gpu:1 --mem 200G -c 10 -p gpu_a100 --constraint="rome
 cd $NOBACKUP/weather_fm_stats/v4
 chmod +x salloc_run_v4.sh
-./salloc_stats_v4.run ../example_yaml_files/stats_AIFS_ERA5_MAY_2024.yaml
+srun --ntasks=1 --cpus-per-task=10 --gres=gpu:1 --mem=60G --time=1:00:00 --partition=gpu_a100 --constraint=rome ./salloc_stats_v4.run ../example_yaml_files/stats_AIFS_ERA5_MAY_2024.yaml
 ```
 
 ## Supported models

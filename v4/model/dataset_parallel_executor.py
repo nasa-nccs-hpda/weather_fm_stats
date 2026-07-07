@@ -39,6 +39,43 @@ def _finish_timing(timings, name, start_time):
     })
 
 
+def _chunk_log_prefix(dataset_type):
+    '''Return a stable uppercase dataset label for chunk logs.'''
+    return dataset_type.upper()
+
+
+def _log_chunk_queued(dataset_type, chunk_spec, position, total_chunks):
+    '''Log that a dataset chunk has been queued/submitted.'''
+    print(f'[INFO] {_chunk_log_prefix(dataset_type)} chunk queued '
+          f'{position}/{total_chunks}: {chunk_spec.chunk_id} '
+          f'items={len(chunk_spec.selected_dates)} '
+          f'output={os.path.basename(chunk_spec.output_path)}',
+          flush=True)
+
+
+def _log_chunk_completed(dataset_type, result, completed_count,
+                         total_chunks, start_time):
+    '''Log that a dataset chunk completed.'''
+    elapsed = round(time.time() - start_time, 2)
+    output_name = os.path.basename(result.get('output_path', ''))
+    print(f'[INFO] {_chunk_log_prefix(dataset_type)} chunk completed '
+          f'{completed_count}/{total_chunks}: {result["chunk_id"]} '
+          f'status={result["status"]} '
+          f'processed_dates={result.get("processed_dates")} '
+          f'output={output_name} elapsed_seconds={elapsed}',
+          flush=True)
+
+
+def _log_chunk_failed(dataset_type, chunk_spec, completed_count,
+                      total_chunks, exc, start_time):
+    '''Log that a dataset chunk failed.'''
+    elapsed = round(time.time() - start_time, 2)
+    print(f'[ERROR] {_chunk_log_prefix(dataset_type)} chunk failed '
+          f'{completed_count}/{total_chunks}: {chunk_spec.chunk_id} '
+          f'error={exc} elapsed_seconds={elapsed}',
+          flush=True)
+
+
 def _run_fcst_chunk_worker(config_path, info_dir, chunk_spec,
                            single_fcst_mode):
     '''Worker entrypoint for one forecast chunk.'''
@@ -260,18 +297,32 @@ def _dataset_needs_processing(config_path, info_dir, single_fcst_mode,
     return dataset_type in datasets_needed
 
 
-def _run_required_chunks(required_chunks, worker_func, worker_args):
+def _run_required_chunks(required_chunks, worker_func, worker_args,
+                         dataset_type):
     '''Run required chunks sequentially or in a process pool.'''
+    worker_args = dict(worker_args)
     max_workers = worker_args.pop('max_workers')
     chunk_results = []
     chunk_failures = []
+    total_chunks = len(required_chunks)
+    start_time = time.time()
+    completed_count = 0
+
+    print(f'[INFO] {_chunk_log_prefix(dataset_type)} chunk execution starting: '
+          f'{total_chunks} required chunk(s), max_workers={max_workers}',
+          flush=True)
 
     if max_workers == 1:
-        for chunk_spec in required_chunks:
+        for position, chunk_spec in enumerate(required_chunks, start=1):
+            _log_chunk_queued(dataset_type, chunk_spec, position,
+                              total_chunks)
             try:
                 result = worker_func(chunk_spec=chunk_spec, **worker_args)
                 chunk_spec.status = result['status']
                 chunk_results.append(result)
+                completed_count += 1
+                _log_chunk_completed(dataset_type, result, completed_count,
+                                     total_chunks, start_time)
             except Exception as exc:
                 traceback.print_exc()
                 chunk_spec.status = 'failed'
@@ -280,19 +331,28 @@ def _run_required_chunks(required_chunks, worker_func, worker_args):
                 chunk_results.append(
                     _chunk_result_from_spec(
                         chunk_spec, status='failed', error=str(exc)))
+                completed_count += 1
+                _log_chunk_failed(dataset_type, chunk_spec, completed_count,
+                                  total_chunks, exc, start_time)
     else:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(worker_func, chunk_spec=chunk_spec,
-                                **worker_args): chunk_spec
-                for chunk_spec in required_chunks
-            }
+            futures = {}
+            for position, chunk_spec in enumerate(required_chunks, start=1):
+                _log_chunk_queued(dataset_type, chunk_spec, position,
+                                  total_chunks)
+                future = executor.submit(
+                    worker_func, chunk_spec=chunk_spec, **worker_args)
+                futures[future] = chunk_spec
             for future in as_completed(futures):
                 chunk_spec = futures[future]
                 try:
                     result = future.result()
                     chunk_spec.status = result['status']
                     chunk_results.append(result)
+                    completed_count += 1
+                    _log_chunk_completed(dataset_type, result,
+                                         completed_count, total_chunks,
+                                         start_time)
                 except Exception as exc:
                     traceback.print_exc()
                     chunk_spec.status = 'failed'
@@ -301,6 +361,10 @@ def _run_required_chunks(required_chunks, worker_func, worker_args):
                     chunk_results.append(
                         _chunk_result_from_spec(
                             chunk_spec, status='failed', error=str(exc)))
+                    completed_count += 1
+                    _log_chunk_failed(dataset_type, chunk_spec,
+                                      completed_count, total_chunks, exc,
+                                      start_time)
 
     return chunk_results, chunk_failures
 
@@ -411,6 +475,7 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
             'single_fcst_mode': single_fcst_mode,
             'max_workers': max_workers,
         },
+        dataset_type,
     )
     _finish_timing(timings, f'{dataset_type}_chunk_execution', chunk_start)
     chunk_results.extend(new_results)
@@ -531,51 +596,19 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
               f'chunk_size={runtime_settings.pipeline_chunk_size_fcst}, '
               f'max_workers={max_workers}')
 
-        chunk_failures = []
         chunk_start = time.time()
-        if max_workers == 1:
-            for chunk_spec in required_chunks:
-                try:
-                    result = _run_fcst_chunk_worker(
-                        config_path, info_dir, chunk_spec,
-                        single_fcst_mode)
-                    chunk_spec.status = result['status']
-                    chunk_results.append(result)
-                except Exception as exc:
-                    traceback.print_exc()
-                    chunk_spec.status = 'failed'
-                    error = f'Chunk {chunk_spec.chunk_id} failed: {exc}'
-                    chunk_failures.append(error)
-                    chunk_results.append(
-                        _chunk_result_from_spec(
-                            chunk_spec, status='failed', error=str(exc)))
-        else:
-            with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(
-                        _run_fcst_chunk_worker,
-                        config_path,
-                        info_dir,
-                        chunk_spec,
-                        single_fcst_mode,
-                    ): chunk_spec
-                    for chunk_spec in required_chunks
-                }
-
-                for future in as_completed(futures):
-                    chunk_spec = futures[future]
-                    try:
-                        result = future.result()
-                        chunk_spec.status = result['status']
-                        chunk_results.append(result)
-                    except Exception as exc:
-                        traceback.print_exc()
-                        chunk_spec.status = 'failed'
-                        error = f'Chunk {chunk_spec.chunk_id} failed: {exc}'
-                        chunk_failures.append(error)
-                        chunk_results.append(
-                            _chunk_result_from_spec(
-                                chunk_spec, status='failed', error=str(exc)))
+        new_results, chunk_failures = _run_required_chunks(
+            required_chunks,
+            _run_fcst_chunk_worker,
+            {
+                'config_path': config_path,
+                'info_dir': info_dir,
+                'single_fcst_mode': single_fcst_mode,
+                'max_workers': max_workers,
+            },
+            'fcst',
+        )
+        chunk_results.extend(new_results)
         _finish_timing(timings, 'fcst_chunk_execution', chunk_start)
 
         chunk_results = sorted(
