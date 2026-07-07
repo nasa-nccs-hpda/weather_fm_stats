@@ -19,11 +19,11 @@ parameters:
     # run stats_regional (for corcmp) and/or stats_global (for syscmp)? [regional, global, both, or none]
     stats_types: both
     # conservative defaults for single-job pipeline parallelism
-    pipeline_max_workers_dataset: 2
+    pipeline_max_workers_dataset: 4
     pipeline_max_workers_stats: 4
-    pipeline_chunk_size_fcst: 2
-    pipeline_chunk_size_ana: 2
-    pipeline_chunk_size_clim: 2
+    pipeline_chunk_size_fcst: 1
+    pipeline_chunk_size_ana: 4
+    pipeline_chunk_size_clim: 4
     pipeline_chunk_size_stats: 2
     # optional location(s) to search for pre-existing processed fcst/ana/clim datasets [comma-separated list]
     # dir_loc: [/path/to/loc1, /path/to/loc2]
@@ -41,7 +41,7 @@ parameters:
     fcst_input_dir_slices: surface_hourly/inst/
     fcst_input_template_default: Y{init_YYYY}/M{init_MM}/D{init_DD}/era5_atmos-inst_allvar_{valid_YYYYMMDD}_{valid_HH}z.nc
     fcst_input_template_slices: Y{init_YYYY}/M{init_MM}/D{init_DD}/era5_surface-inst_allvar_{valid_YYYYMMDD}_{valid_HH}z.nc
-    
+
     # ERA5 analysis has separate 2D/3D directories
     ana_model: ERA5
     ana_input_dir: /discover/nobackup/khbreen/qefm_local/HHO/era5/
@@ -49,7 +49,7 @@ parameters:
     ana_input_dir_slices: surface_hourly/inst/
     ana_input_template_default: Y{valid_YYYY}/M{valid_MM}/era5_atmos-inst_allvar_{valid_YYYYMMDD}_{valid_HH}z.nc
     ana_input_template_slices: Y{valid_YYYY}/M{valid_MM}/era5_surface-inst_allvar_{valid_YYYYMMDD}_{valid_HH}z.nc
-    
+
     # ERA5 climatology - no separate directories needed
     clim_model: ERA5
     clim_input_dir: /discover/nobackup/projects/gmao/geos_itv/mefrazer/METplus/clim/trimmed
