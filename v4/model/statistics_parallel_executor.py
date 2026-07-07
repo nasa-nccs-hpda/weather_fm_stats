@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
@@ -204,14 +205,28 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
           f'max_workers={max_workers}')
 
     chunk_failures = []
+    completed_required_chunks = 0
     if max_workers == 1:
         for chunk_spec in required_chunks:
+            chunk_start = time.time()
+            print(f'[INFO] {stats_kind} stats chunk started: '
+                  f'{chunk_spec.chunk_id} '
+                  f'({completed_required_chunks + 1}/'
+                  f'{len(required_chunks)})')
             try:
                 result = _run_stats_chunk_worker(
                     stats_kind, processor_config, dataset_files, leads,
                     info_dir, chunk_spec)
                 chunk_spec.status = result['status']
                 chunk_results.append(result)
+                completed_required_chunks += 1
+                print(f'[INFO] {stats_kind} stats chunk completed: '
+                      f'{chunk_spec.chunk_id} '
+                      f'progress={completed_required_chunks}/'
+                      f'{len(required_chunks)} '
+                      f'dates={result.get("processed_dates")} '
+                      f'max_memory_mb={result.get("max_memory_mb")} '
+                      f'wall_seconds={round(time.time() - chunk_start, 2)}')
             except Exception as exc:
                 traceback.print_exc()
                 chunk_spec.status = 'failed'
@@ -220,6 +235,13 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
                 chunk_results.append(
                     _chunk_result_from_spec(
                         chunk_spec, status='failed', error=str(exc)))
+                completed_required_chunks += 1
+                print(f'[ERROR] {stats_kind} stats chunk failed: '
+                      f'{chunk_spec.chunk_id} '
+                      f'progress={completed_required_chunks}/'
+                      f'{len(required_chunks)} '
+                      f'wall_seconds={round(time.time() - chunk_start, 2)} '
+                      f'error={exc}')
     else:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {
@@ -234,6 +256,11 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
                 ): chunk_spec
                 for chunk_spec in required_chunks
             }
+            future_start_times = {
+                future: time.time() for future in futures
+            }
+            print(f'[INFO] {stats_kind} stats submitted '
+                  f'{len(futures)} chunk future(s)')
 
             for future in as_completed(futures):
                 chunk_spec = futures[future]
@@ -241,6 +268,15 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
                     result = future.result()
                     chunk_spec.status = result['status']
                     chunk_results.append(result)
+                    completed_required_chunks += 1
+                    print(f'[INFO] {stats_kind} stats chunk completed: '
+                          f'{chunk_spec.chunk_id} '
+                          f'progress={completed_required_chunks}/'
+                          f'{len(required_chunks)} '
+                          f'dates={result.get("processed_dates")} '
+                          f'max_memory_mb={result.get("max_memory_mb")} '
+                          f'elapsed_since_submit_seconds='
+                          f'{round(time.time() - future_start_times[future], 2)}')
                 except Exception as exc:
                     traceback.print_exc()
                     chunk_spec.status = 'failed'
@@ -249,6 +285,14 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
                     chunk_results.append(
                         _chunk_result_from_spec(
                             chunk_spec, status='failed', error=str(exc)))
+                    completed_required_chunks += 1
+                    print(f'[ERROR] {stats_kind} stats chunk failed: '
+                          f'{chunk_spec.chunk_id} '
+                          f'progress={completed_required_chunks}/'
+                          f'{len(required_chunks)} '
+                          f'elapsed_since_submit_seconds='
+                          f'{round(time.time() - future_start_times[future], 2)} '
+                          f'error={exc}')
 
     chunk_results = sorted(
         chunk_results, key=lambda item: item['chunk_index'])

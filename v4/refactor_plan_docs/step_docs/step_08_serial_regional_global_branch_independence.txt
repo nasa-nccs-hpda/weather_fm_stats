@@ -78,6 +78,9 @@ Actual Implementation
 - Added explicit serial branch-order logging for regional/global statistics.
 - Added per-branch tuning logs showing pipeline_chunk_size_stats and the
   configured regional/global stats worker cap.
+- Added regional/global statistics chunk logging as worker futures complete,
+  including chunk id, progress count, processed date count, worker-reported
+  memory, and elapsed time since submission.
 - Added branch-level summary metadata:
   branch name, execution mode, branch order, requested branch count, start time,
   end time, wall time, chunk size, configured max workers, effective max
