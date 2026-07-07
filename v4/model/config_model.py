@@ -72,7 +72,7 @@ def resolve_runtime_settings(args, config):
     pipeline_branch_execution = _resolve_setting(
         getattr(args, 'pipeline_branch_execution', None),
         config.get('pipeline_branch_execution'),
-        'parallel',
+        'sequential',
     )
     pipeline_resume_mode = _resolve_setting(
         getattr(args, 'pipeline_resume_mode', None),
@@ -142,7 +142,7 @@ def resolve_runtime_settings(args, config):
 
     valid_stats_types = {'regional', 'global', 'both'}
     valid_fail_policy = {'fail_fast', 'partial_ok'}
-    valid_branch_execution = {'parallel', 'sequential'}
+    valid_branch_execution = {'sequential'}
     valid_resume_mode = {'off', 'safe'}
 
     if stats_types not in valid_stats_types:

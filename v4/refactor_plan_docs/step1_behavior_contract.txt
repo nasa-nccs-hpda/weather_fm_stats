@@ -38,7 +38,8 @@ Scope of Step 1
 - stats_types=global: run global only.
 - stats_types=both: run both branches from the same source datasets.
 - Regional/global outputs must remain separate files.
-- Branches can run in parallel if resources allow; otherwise sequential is valid.
+- Regional/global statistics branches run sequentially in v4 to avoid
+  concurrent shared reads from the same source datasets.
 
 3) Failure Policy (Contract)
 - Preflight failure: whole run fails immediately.
@@ -81,9 +82,11 @@ Use these keys (YAML) to support step-1 behavior decisions now:
     - partial_ok: allow independent branch completion and report partial.
   - Recommended default: partial_ok
 
-- pipeline_branch_execution: "parallel"
-  - Allowed: parallel, sequential
-  - Recommended default: parallel (fallback to sequential when constrained)
+- pipeline_branch_execution: "sequential"
+  - Allowed: sequential
+  - Recommended default: sequential
+  - Concurrent regional/global branch execution is deferred to a future refactor
+    version after shared-read filesystem and memory behavior can be tested.
 
 - pipeline_resume_mode: "safe"
   - Allowed: off, safe

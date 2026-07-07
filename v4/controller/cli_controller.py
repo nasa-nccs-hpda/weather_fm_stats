@@ -158,8 +158,10 @@ def parse_arguments():
                         choices=['fail_fast', 'partial_ok'],
                         help='Pipeline failure handling policy')
     parser.add_argument('--pipeline_branch_execution',
-                        choices=['parallel', 'sequential'],
-                        help='Pipeline branch execution mode')
+                        choices=['sequential'],
+                        help=('Pipeline branch execution mode '
+                              '(v4 supports sequential regional/global '
+                              'branches only)'))
     parser.add_argument('--pipeline_resume_mode',
                         choices=['off', 'safe'],
                         help='Pipeline resume mode')
@@ -453,6 +455,38 @@ def run_stats_branch(stats_kind, processor_config, dataset_files, init_dates,
         return {'status': 'FAILURE', 'error': str(exc)}
 
 
+def finalize_branch_result(branch_name, branch_result, branch_start_time,
+                           branch_start_label, branch_order,
+                           requested_branch_count):
+    '''Add pipeline-level branch metadata for summaries.'''
+    branch_result.setdefault('branch', branch_name)
+    branch_result.setdefault('error', '')
+    branch_result['execution_mode'] = 'sequential'
+    branch_result['branch_order'] = branch_order
+    branch_result['requested_branch_count'] = requested_branch_count
+    branch_result['start_time'] = branch_start_label
+    branch_result['end_time'] = datetime.now().isoformat()
+    branch_result['wall_seconds'] = round(time.time() - branch_start_time, 2)
+    output_path = branch_result.get('output_path')
+    if output_path:
+        branch_result['output_exists'] = os.path.exists(output_path)
+    return branch_result
+
+
+def skipped_branch_result(branch_name, reason, branch_order,
+                          requested_branch_count):
+    '''Create a summary record for a branch skipped by policy.'''
+    return {
+        'status': 'SKIPPED',
+        'error': reason,
+        'branch': branch_name,
+        'execution_mode': 'sequential',
+        'branch_order': branch_order,
+        'requested_branch_count': requested_branch_count,
+        'wall_seconds': 0.0,
+    }
+
+
 def write_pipeline_summary(info_dir, runtime_settings, branch_results,
                            final_status, stage_metrics=None,
                            dataset_timings=None):
@@ -478,8 +512,20 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
                 f'{runtime_settings.pipeline_resume_mode}\n')
         for branch_name, branch_result in branch_results.items():
             f.write(f'{branch_name}_status: {branch_result["status"]}\n')
-            if branch_result['error']:
+            if branch_result.get('error'):
                 f.write(f'{branch_name}_error: {branch_result["error"]}\n')
+            if branch_result.get('execution_mode'):
+                f.write(f'{branch_name}_execution_mode: '
+                        f'{branch_result["execution_mode"]}\n')
+            if branch_result.get('branch_order') is not None:
+                f.write(f'{branch_name}_branch_order: '
+                        f'{branch_result["branch_order"]}\n')
+            if branch_result.get('start_time'):
+                f.write(f'{branch_name}_start_time: '
+                        f'{branch_result["start_time"]}\n')
+            if branch_result.get('end_time'):
+                f.write(f'{branch_name}_end_time: '
+                        f'{branch_result["end_time"]}\n')
             if 'chunk_count' in branch_result:
                 f.write(f'{branch_name}_chunk_count: '
                         f'{branch_result["chunk_count"]}\n')
@@ -487,15 +533,30 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
                         f'{branch_result["required_chunk_count"]}\n')
                 f.write(f'{branch_name}_skipped_chunk_count: '
                         f'{branch_result["skipped_chunk_count"]}\n')
+                f.write(f'{branch_name}_completed_chunk_count: '
+                        f'{branch_result.get("completed_chunk_count")}\n')
+                f.write(f'{branch_name}_failed_chunk_count: '
+                        f'{branch_result.get("failed_chunk_count")}\n')
+            if 'chunk_size' in branch_result:
+                f.write(f'{branch_name}_chunk_size: '
+                        f'{branch_result["chunk_size"]}\n')
             if 'max_workers' in branch_result:
                 f.write(f'{branch_name}_max_workers: '
                         f'{branch_result["max_workers"]}\n')
+            if 'configured_max_workers' in branch_result:
+                f.write(f'{branch_name}_configured_max_workers: '
+                        f'{branch_result["configured_max_workers"]}\n')
             if branch_result.get('max_memory_mb') is not None:
                 f.write(f'{branch_name}_max_memory_mb: '
                         f'{branch_result["max_memory_mb"]}\n')
             if branch_result.get('wall_seconds') is not None:
                 f.write(f'{branch_name}_wall_seconds: '
                         f'{branch_result["wall_seconds"]}\n')
+            if branch_result.get('output_path'):
+                f.write(f'{branch_name}_output_path: '
+                        f'{branch_result["output_path"]}\n')
+                f.write(f'{branch_name}_output_exists: '
+                        f'{branch_result.get("output_exists")}\n')
         branch_memory = [
             result.get('max_memory_mb') for result in branch_results.values()
             if result.get('max_memory_mb') is not None
@@ -545,16 +606,28 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
     print('[INFO] Pipeline final summary:')
     for branch_name, branch_result in branch_results.items():
         print(f'  {branch_name}: {branch_result["status"]}')
+        if branch_result.get('error'):
+            print(f'    error={branch_result["error"]}')
         if 'chunk_count' in branch_result:
             print(f'    chunks={branch_result["chunk_count"]} '
                   f'required={branch_result["required_chunk_count"]} '
-                  f'skipped={branch_result["skipped_chunk_count"]}')
+                  f'skipped={branch_result["skipped_chunk_count"]} '
+                  f'completed={branch_result.get("completed_chunk_count")} '
+                  f'failed={branch_result.get("failed_chunk_count")}')
+        if 'chunk_size' in branch_result:
+            print(f'    chunk_size={branch_result["chunk_size"]}')
         if 'max_workers' in branch_result:
             print(f'    max_workers={branch_result["max_workers"]}')
+        if 'configured_max_workers' in branch_result:
+            print(f'    configured_max_workers='
+                  f'{branch_result["configured_max_workers"]}')
         if branch_result.get('max_memory_mb') is not None:
             print(f'    max_memory_mb={branch_result["max_memory_mb"]}')
         if branch_result.get('wall_seconds') is not None:
             print(f'    wall_seconds={branch_result["wall_seconds"]}')
+        if branch_result.get('output_path'):
+            print(f'    output={branch_result["output_path"]} '
+                  f'exists={branch_result.get("output_exists")}')
     if pipeline_max_memory is not None:
         print(f'  pipeline_max_memory_mb={pipeline_max_memory}')
     if stage_metrics:
@@ -641,26 +714,44 @@ def run_pipeline_mode(args, single_fcst_mode):
     if runtime_settings.stats_types in ['global', 'both']:
         requested_branches.append('global')
 
-    if (runtime_settings.pipeline_branch_execution == 'parallel' and
-        len(requested_branches) > 1):
-        print('[INFO] Branch execution=parallel configured; running sequentially '
-              'for now in step 2/3 orchestration.')
+    print('[INFO] Statistics branch execution is sequential in v4')
+    print(f'[INFO] Requested statistics branch order: '
+          f'{", ".join(requested_branches)}')
 
     branch_results = {}
     fail_fast_triggered = False
     with record_pipeline_stage(stage_metrics, 'stage_3_statistics_branches'):
-        for branch in requested_branches:
-            print(f'[INFO] Running {branch} statistics branch...')
+        for branch_index, branch in enumerate(requested_branches, start=1):
+            print(f'[INFO] Running {branch} statistics branch '
+                  f'({branch_index}/{len(requested_branches)})...')
+            print(f'[INFO] {branch} stats tuning: '
+                  f'chunk_size={runtime_settings.pipeline_chunk_size_stats}, '
+                  f'max_workers='
+                  f'{runtime_settings.pipeline_max_workers_stats_regional if branch == "regional" else runtime_settings.pipeline_max_workers_stats_global}')
             branch_start = time.time()
-            branch_results[branch] = run_stats_branch(
+            branch_start_label = datetime.now().isoformat()
+            branch_result = run_stats_branch(
                 branch, processor.config, dataset_files, init_dates, leads,
                 args.info_dir, runtime_settings=runtime_settings)
-            branch_results[branch]['wall_seconds'] = round(
-                time.time() - branch_start, 2)
+            branch_results[branch] = finalize_branch_result(
+                branch, branch_result, branch_start, branch_start_label,
+                branch_index, len(requested_branches))
+            print(f'[INFO] {branch} statistics branch finished: '
+                  f'status={branch_results[branch]["status"]}, '
+                  f'wall_seconds={branch_results[branch]["wall_seconds"]}')
             if (branch_results[branch]['status'] != 'SUCCESS' and
                 runtime_settings.pipeline_fail_policy == 'fail_fast'):
                 print('[ERROR] fail_fast policy triggered')
                 fail_fast_triggered = True
+                for skipped_index in range(branch_index,
+                                           len(requested_branches)):
+                    skipped_branch = requested_branches[skipped_index]
+                    if skipped_branch not in branch_results:
+                        branch_results[skipped_branch] = skipped_branch_result(
+                            skipped_branch,
+                            'Skipped because fail_fast policy was triggered',
+                            skipped_index + 1,
+                            len(requested_branches))
                 break
     if fail_fast_triggered:
         write_pipeline_summary(args.info_dir, runtime_settings,

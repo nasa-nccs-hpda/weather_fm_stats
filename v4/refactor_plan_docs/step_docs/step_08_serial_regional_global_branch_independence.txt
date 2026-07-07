@@ -1,0 +1,117 @@
+Step 8: Strengthen Serial Regional And Global Branch Independence
+
+Status
+- Implemented in code; HPC tuning and validation pending.
+
+Reason For This Step
+- Regional and global statistics already represent separate logical pipeline
+  branches after the source datasets are built.
+- The branches currently share the same processed fcst, ana, and clim datasets.
+- Running regional and global concurrently could cause many workers to read the
+  same source datasets at once, increasing filesystem, memory, NetCDF/HDF5, and
+  OS page-cache pressure.
+- The statistics stage is currently a major runtime cost, especially global
+  statistics, so this step should also test chunk-level worker counts and chunk
+  sizes to improve execution time without adding branch-level concurrency.
+- This step strengthens branch independence while keeping branch execution
+  serial for stability.
+
+Planned Work
+- Keep regional and global statistics execution serial in the v4 refactor.
+- Treat regional and global as separate branch records inside the statistics
+  stage.
+- Record separate status, errors, output paths, chunk counts, worker counts,
+  timing, and resource summaries for each branch.
+- Test regional/global statistics worker counts and statistics chunk sizes on
+  HPC to identify faster stable settings.
+- Keep tuning focused on existing chunk-level parallelism:
+  pipeline_max_workers_stats_regional, pipeline_max_workers_stats_global, and
+  pipeline_chunk_size_stats.
+- Preserve the current shared source-dataset barrier: fcst, ana, and clim must
+  be created, validated, merged, and closed before statistics begin.
+- Improve failure handling so one branch can fail without hiding the status or
+  outputs of the other branch when the configured failure policy permits.
+- Make the final pipeline summary clearly distinguish regional and global
+  branch results.
+
+Out Of Scope For This Step
+- Do not run regional and global statistics branches concurrently.
+- Do not add a branch-level ProcessPoolExecutor above the existing chunk-level
+  statistics workers.
+- Do not change statistics performance by changing formulas, interpolation,
+  aggregation definitions, or output content.
+- Do not change regional or global statistics formulas.
+- Do not change final output filenames.
+- Do not change source dataset creation behavior from Step 7.
+- Do not add full restart/resume checkpointing; that remains Step 9.
+- Do not perform the broader logging cleanup planned for Step 10.
+
+Planned Files To Inspect Or Touch
+- controller/cli_controller.py
+- model/statistics_parallel_executor.py
+- model/config_model.py, only if failure-policy or branch-summary settings need
+  to be represented in runtime settings.
+- refactor_plan_docs/v4_refactor_plan.txt
+- refactor_plan_docs/step_docs/step_08_serial_regional_global_branch_independence.txt
+
+Planned Acceptance Criteria
+- Regional and global statistics still run serially.
+- Regional and global branch summaries are reported separately.
+- Each branch records status, errors, outputs, chunk counts, worker counts, and
+  timing independently.
+- HPC testing identifies recommended regional/global statistics worker counts
+  and statistics chunk sizes for the current Discover allocation size.
+- Statistics tuning improves or explains total statistics stage wall time
+  without introducing branch-level concurrency.
+- A regional failure does not erase or obscure global branch status, and a global
+  failure does not erase or obscure regional branch status.
+- Existing successful output behavior remains unchanged.
+- The final pipeline summary makes it obvious which branch succeeded, failed, or
+  was skipped.
+
+Actual Implementation
+- Changed v4 runtime settings so pipeline_branch_execution defaults to
+  sequential.
+- Restricted v4 CLI/config validation to sequential branch execution only.
+- Removed the stale runtime message that accepted parallel branch execution but
+  silently ran sequentially.
+- Added explicit serial branch-order logging for regional/global statistics.
+- Added per-branch tuning logs showing pipeline_chunk_size_stats and the
+  configured regional/global stats worker cap.
+- Added branch-level summary metadata:
+  branch name, execution mode, branch order, requested branch count, start time,
+  end time, wall time, chunk size, configured max workers, effective max
+  workers, chunk counts, completed chunks, failed chunks, output path, and
+  output existence.
+- Added fail_fast skipped-branch records so a branch skipped by policy is
+  visible in the final summary instead of disappearing.
+- Kept regional/global execution serial and did not add branch-level
+  concurrency.
+
+Validation Notes
+- Ran Python compile validation on changed v4 modules:
+  python -m py_compile v4\model\config_model.py
+  v4\model\statistics_parallel_executor.py v4\controller\cli_controller.py
+- Did not run stats_v4.py or v4 run scripts locally; those are intended for the
+  HPC environment.
+- HPC validation should test regional/global statistics worker counts and
+  pipeline_chunk_size_stats values to identify faster stable settings,
+  especially for global statistics.
+
+Known Limits After This Step
+- Step 8 improves branch observability and serial failure isolation, but it does
+  not reduce statistics runtime by itself unless HPC tuning changes are applied.
+- Global statistics remains the primary statistics bottleneck based on the
+  latest full-pipeline run.
+- Child-process CPU and memory accounting remains limited until the Step 10
+  logging/resource-accounting work.
+
+Future Refactor Note
+- Concurrent regional/global branch execution should be considered for a future
+  refactor version, such as v5 or v6.
+- Before enabling concurrent branch execution, test shared-read behavior on the
+  HPC filesystem with realistic source datasets, worker counts, memory limits,
+  NetCDF/HDF5 backends, and OS page-cache pressure.
+- If concurrent branches are added later, worker allocation should account for
+  nested parallelism so branch workers plus chunk workers do not oversubscribe
+  the SLURM CPU and memory allocation.

@@ -62,6 +62,28 @@ def _stats_type_for_branch(stats_kind):
     raise ValueError(f'Unsupported stats branch: {stats_kind}')
 
 
+def _expected_statistics_output_path(stats_kind, processor_config,
+                                     dataset_files):
+    '''Build expected final statistics output path for a branch.'''
+    fcst_file = dataset_files.get('fcst')
+    if not fcst_file:
+        return None
+    fcst_model = processor_config.get('fcst_model', '')
+    ana_model = processor_config.get('ana_model', '')
+    clim_model = processor_config.get('clim_model', '')
+    try:
+        suffix = os.path.basename(fcst_file).split(f'{fcst_model}_', 1)[1]
+    except IndexError:
+        return None
+    if stats_kind == 'regional':
+        return (f'outputs/stats_regional_{fcst_model}_{ana_model}_'
+                f'{clim_model}_{suffix}')
+    if stats_kind == 'global':
+        return (f'outputs/stats_global_{fcst_model}_{ana_model}_'
+                f'{clim_model}_{suffix}')
+    return None
+
+
 def _run_stats_chunk_worker(stats_kind, processor_config, dataset_files,
                             leads, info_dir, chunk_spec):
     '''Worker entrypoint for one statistics chunk.'''
@@ -148,15 +170,28 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
     ]
 
     if not required_chunks:
+        expected_output_path = _expected_statistics_output_path(
+            stats_kind, processor_config, dataset_files)
         return {
             'status': 'FAILURE',
             'error': 'No statistics init_dates available after exclusions',
+            'branch': stats_kind,
+            'stats_type': stats_type,
             'chunk_results': sorted(
                 chunk_results, key=lambda item: item['chunk_index']),
             'chunk_count': len(chunk_specs),
             'required_chunk_count': 0,
             'skipped_chunk_count': len(skipped_chunks),
+            'completed_chunk_count': 0,
+            'failed_chunk_count': 0,
+            'max_workers': 0,
+            'configured_max_workers': (
+                runtime_settings.pipeline_max_workers_stats_regional
+                if stats_kind == 'regional'
+                else runtime_settings.pipeline_max_workers_stats_global),
+            'chunk_size': runtime_settings.pipeline_chunk_size_stats,
             'max_memory_mb': get_current_memory_mb(),
+            'output_path': expected_output_path,
         }
 
     max_workers = _resolve_stats_workers(runtime_settings,
@@ -226,17 +261,33 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
     branch_max_memory = (
         max(branch_memory_values) if branch_memory_values else
         get_current_memory_mb())
+    completed_chunk_count = sum(
+        1 for result in chunk_results if result.get('status') == 'success')
+    failed_chunk_count = sum(
+        1 for result in chunk_results if result.get('status') == 'failed')
+    expected_output_path = _expected_statistics_output_path(
+        stats_kind, processor_config, dataset_files)
 
     if chunk_failures:
         return {
             'status': 'FAILURE',
             'error': '; '.join(chunk_failures),
+            'branch': stats_kind,
+            'stats_type': stats_type,
             'chunk_results': chunk_results,
             'chunk_count': len(chunk_specs),
             'required_chunk_count': len(required_chunks),
             'skipped_chunk_count': len(skipped_chunks),
+            'completed_chunk_count': completed_chunk_count,
+            'failed_chunk_count': failed_chunk_count,
             'max_workers': max_workers,
+            'configured_max_workers': (
+                runtime_settings.pipeline_max_workers_stats_regional
+                if stats_kind == 'regional'
+                else runtime_settings.pipeline_max_workers_stats_global),
+            'chunk_size': runtime_settings.pipeline_chunk_size_stats,
             'max_memory_mb': branch_max_memory,
+            'output_path': expected_output_path,
         }
 
     if not StatisticsProcessor.merge_statistics_files(
@@ -244,21 +295,41 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
         return {
             'status': 'FAILURE',
             'error': 'statistics chunk merge failed',
+            'branch': stats_kind,
+            'stats_type': stats_type,
             'chunk_results': chunk_results,
             'chunk_count': len(chunk_specs),
             'required_chunk_count': len(required_chunks),
             'skipped_chunk_count': len(skipped_chunks),
+            'completed_chunk_count': completed_chunk_count,
+            'failed_chunk_count': failed_chunk_count,
             'max_workers': max_workers,
+            'configured_max_workers': (
+                runtime_settings.pipeline_max_workers_stats_regional
+                if stats_kind == 'regional'
+                else runtime_settings.pipeline_max_workers_stats_global),
+            'chunk_size': runtime_settings.pipeline_chunk_size_stats,
             'max_memory_mb': branch_max_memory,
+            'output_path': expected_output_path,
         }
 
     return {
         'status': 'SUCCESS',
         'error': '',
+        'branch': stats_kind,
+        'stats_type': stats_type,
         'chunk_results': chunk_results,
         'chunk_count': len(chunk_specs),
         'required_chunk_count': len(required_chunks),
         'skipped_chunk_count': len(skipped_chunks),
+        'completed_chunk_count': completed_chunk_count,
+        'failed_chunk_count': failed_chunk_count,
         'max_workers': max_workers,
+        'configured_max_workers': (
+            runtime_settings.pipeline_max_workers_stats_regional
+            if stats_kind == 'regional'
+            else runtime_settings.pipeline_max_workers_stats_global),
+        'chunk_size': runtime_settings.pipeline_chunk_size_stats,
         'max_memory_mb': branch_max_memory,
+        'output_path': expected_output_path,
     }

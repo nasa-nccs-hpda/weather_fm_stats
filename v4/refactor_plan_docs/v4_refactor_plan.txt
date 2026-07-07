@@ -35,21 +35,29 @@
   - Write deterministic ana/clim chunk output files and merge them in chunk-plan order.
   - Preserve final ana/clim filenames and existing validated-dataset skip behavior.
 
-8. Strengthen regional and global branch independence (Estimated LOC: 100-220)
+8. Strengthen serial regional and global branch independence (Estimated LOC: 100-220)
   - Keep regional and global stats as separate branches using the same fcst, ana, and clim inputs.
+  - Keep regional and global branch execution serial in this refactor to avoid concurrent shared reads from the same source datasets.
+  - Test and tune regional/global statistics worker counts and statistics chunk sizes to reduce total statistics execution time without adding branch-level concurrency.
+  - Treat global statistics as the primary statistics bottleneck and use HPC timing tests to compare chunk-size and worker-count settings.
   - Record separate branch status, errors, outputs, and logs.
   - Allow one branch to fail without preventing the other from completing when fail policy permits.
+  - Defer concurrent regional/global branch execution to a future refactor version after shared-read filesystem and memory behavior can be tested safely.
 
 9. Add restart and resume support (Estimated LOC: 160-360)
   - Track stage, branch, and chunk completion.
   - On rerun, skip completed good outputs and continue from the first incomplete point.
   - Avoid redoing expensive steps unless required.
 
-10. Improve logs and run summary (Estimated LOC: 80-180)
-  - Add simple, readable stage and chunk progress messages.
-  - Include timing summaries and counts of completed, skipped, and failed chunks.
+10. Improve logging for parallel processing (Estimated LOC: 80-180)
+  - Reduce normal-case output verbosity so successful runs are easier to scan.
+  - Do not print detailed validation output when validation passes normally; reserve details for warnings, failures, debug mode, or explicit verbose output.
+  - Add simple, readable progress messages for parallel dataset and statistics workers, including queued, started, completed, skipped, and failed chunks.
+  - Include timing summaries and counts of completed, skipped, and failed chunks by dataset/statistics branch.
   - Record pipeline start time, finish time, and elapsed wall time in logs and run_summary.txt.
-  - End with a concise final summary.
+  - Improve CPU utilization reporting for parallel work by capturing child/worker process CPU usage where possible, so dataset and statistics chunk summaries reflect actual SLURM CPU use rather than only parent-process CPU time.
+  - Improve child-process resource accounting for CPU and memory so summaries reflect actual ProcessPoolExecutor worker usage.
+  - End with a concise final summary that highlights outputs, failures, warnings, and bottlenecks.
 
 11. Extend resource-aware worker controls (Estimated LOC: 60-140)
   - Apply SLURM_CPUS_PER_TASK and configured limits consistently to dataset, statistics, and branch workers.

@@ -48,6 +48,14 @@ Actual Implementation
 - Added separate pipeline chunk-size settings for analysis and climatology:
   pipeline_chunk_size_ana and pipeline_chunk_size_clim. Both default to
   pipeline_chunk_size_fcst when omitted.
+- Added separate dataset worker caps:
+  pipeline_max_workers_dataset_fcst, pipeline_max_workers_dataset_ana, and
+  pipeline_max_workers_dataset_clim.
+- Added separate statistics worker caps:
+  pipeline_max_workers_stats_regional and pipeline_max_workers_stats_global.
+- Updated example YAML defaults for the current HPC tuning:
+  fcst workers=8, ana workers=8, clim workers=4, regional workers=4,
+  global workers=4, fcst chunk size=1, ana chunk size=4, clim chunk size=4.
 - Added analysis and climatology valid-time selectors to BatchDatasetProcessor
   so chunk workers process only their assigned valid-time slices.
 - Added deterministic chunk output saving for ana/clim using existing tmp
@@ -60,19 +68,42 @@ Actual Implementation
 - Replaced the serial analysis/climatology follow-up stage in pipeline mode
   with separate parallel valid-time chunk builds for ana and clim.
 - Preserved final ana/clim filenames and existing-final-dataset skip behavior.
+- Added dataset chunk progress logging for queued, completed, skipped, and
+  failed chunks to make long ana/clim builds easier to monitor on HPC.
+- Added dataset timing summaries for fcst, ana, clim, chunk execution, chunk
+  merge, existing-output checks, and source dataset build total.
+- Added pipeline stage resource summaries with wall time, parent-process CPU
+  time, CPU percentage relative to allocated CPUs, and RSS/max RSS.
+- Added run summary output that includes stage resource usage and dataset
+  timing/resource sections.
+- Added warning suppression for the known xESMF latitude warning when source
+  latitude metadata extends outside [-90, 90].
+- Added a narrow xESMF input-contiguity fix before regridding so non-contiguous
+  arrays are copied to C-contiguous input arrays before calling the regridder.
 
 Validation Notes
 - Ran Python compile validation on changed v4 modules:
   python -m py_compile v4\model\chunk_plan.py v4\model\config_model.py
   v4\model\dataset_processor.py v4\model\dataset_parallel_executor.py
-  v4\controller\cli_controller.py
+  v4\model\statistics_parallel_executor.py v4\controller\cli_controller.py
 - Did not run stats_v4.py or v4 run scripts locally; those are intended for
   the HPC environment.
-- Still validate first on HPC with the small five-day T/T2m YAML, then with
-  the larger YAML that exposed the bottleneck.
+- HPC testing showed that ana/clim valid-time chunking works end-to-end.
+- A full pipeline run completed with parallelized ana/clim after tuning clim to
+  larger chunks and fewer concurrent workers. The stable test used clim chunk
+  size 8 with 2 clim workers.
+- The completed test reused existing fcst/ana outputs and primarily exercised
+  clim creation plus regional/global statistics.
+- The run showed clim chunk execution as the source-dataset bottleneck and
+  global statistics as the larger statistics bottleneck.
 
 Known Limits After This Step
 - Analysis and climatology chunks run as separate stages after forecast chunk
   processing; regional and global statistics branches are still not made
   concurrent by this step.
 - Full restart/resume checkpointing remains pending for a later step.
+- Current CPU utilization summaries mostly reflect parent-process CPU time and
+  under-report child worker CPU use. Step 10 should improve CPU reporting for
+  parallel worker processes.
+- Climatology remains more sensitive to worker count and xESMF/native-library
+  memory behavior than forecast or analysis processing.
