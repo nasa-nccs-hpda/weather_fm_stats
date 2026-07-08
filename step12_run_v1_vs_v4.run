@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+short_yaml="${repo_dir}/example_yaml_files/stats_AIFS_ERA5_MAY_2024_T_T2m_5day.yaml"
+long_yaml="${repo_dir}/example_yaml_files/stats_AIFS_ERA5_MAY_2024.yaml"
+poll_seconds="${STEP12_POLL_SECONDS:-30}"
+
+declare -a result_labels=()
+declare -a result_v1_seconds=()
+declare -a result_v4_seconds=()
+
+require_file() {
+    local path="$1"
+    if [[ ! -f "$path" ]]; then
+        echo "Error: required file not found: $path" >&2
+        exit 1
+    fi
+}
+
+elapsed_hms() {
+    local seconds="$1"
+    printf '%02d:%02d:%02d' \
+        "$((seconds / 3600))" \
+        "$(((seconds % 3600) / 60))" \
+        "$((seconds % 60))"
+}
+
+extract_job_ids() {
+    local log_file="$1"
+    awk '
+        /Submitted:/ {
+            for (i = 1; i <= NF; i++) {
+                if ($i == "Submitted:") {
+                    print $(i + 1)
+                }
+            }
+        }
+        /^Job ID:/ {
+            print $3
+        }
+    ' "$log_file" | sed 's/;.*//' | sort -u
+}
+
+jobs_running() {
+    local job_list="$1"
+    squeue -h -j "$job_list" | grep -q .
+}
+
+wait_for_experiment_jobs() {
+    local label="$1"
+    local v1_start="$2"
+    local v4_start="$3"
+    local v1_jobs="$4"
+    local v4_jobs="$5"
+    local v1_count="$6"
+    local v4_count="$7"
+
+    echo "Waiting for $label v1 jobs to finish (${v1_count} job(s)): $v1_jobs"
+    echo "Waiting for $label v4 jobs to finish (${v4_count} job(s)): $v4_jobs"
+
+    local v1_done=0
+    local v4_done=0
+    local v1_end=0
+    local v4_end=0
+
+    while ((v1_done == 0 || v4_done == 0)); do
+        if ((v1_done == 0)) && ! jobs_running "$v1_jobs"; then
+            v1_done=1
+            v1_end="$(date +%s)"
+            echo "$label v1 jobs finished."
+        fi
+        if ((v4_done == 0)) && ! jobs_running "$v4_jobs"; then
+            v4_done=1
+            v4_end="$(date +%s)"
+            echo "$label v4 jobs finished."
+        fi
+        if ((v1_done == 0 || v4_done == 0)); then
+            sleep "$poll_seconds"
+        fi
+    done
+
+    result_labels+=("$label")
+    result_v1_seconds+=("$((v1_end - v1_start))")
+    result_v4_seconds+=("$((v4_end - v4_start))")
+}
+
+submit_workflow() {
+    local version="$1"
+    local yaml_path="$2"
+    local label="$3"
+    local submit_log="$4"
+
+    echo "Submitting $version workflow for $label"
+    if [[ "$version" == "v1" ]]; then
+        chmod +x "${repo_dir}/v1/stats_trimmed.run"
+        (
+            cd "${repo_dir}/v1"
+            ./stats_trimmed.run "$yaml_path"
+        ) | tee "$submit_log"
+    elif [[ "$version" == "v4" ]]; then
+        chmod +x "${repo_dir}/v4/sbatch_stats_v4.run"
+        (
+            cd "${repo_dir}/v4"
+            ./sbatch_stats_v4.run "$yaml_path"
+        ) | tee "$submit_log"
+    else
+        echo "Error: unsupported workflow version: $version" >&2
+        exit 1
+    fi
+}
+
+run_side_by_side_experiment() {
+    local label="$1"
+    local yaml_path="$2"
+    local submit_dir="${repo_dir}/step12_submit_logs"
+    mkdir -p "$submit_dir"
+
+    local stamp
+    stamp="$(date +%Y%m%d_%H%M%S)"
+    local v1_log="${submit_dir}/${label}_v1_${stamp}.log"
+    local v4_log="${submit_dir}/${label}_v4_${stamp}.log"
+
+    echo
+    echo "======================================================================"
+    echo "STEP 12 EXPERIMENT: ${label}"
+    echo "YAML: ${yaml_path}"
+    echo "======================================================================"
+
+    local v1_start
+    local v4_start
+    local -a v1_jobs
+    local -a v4_jobs
+    v1_start="$(date +%s)"
+    submit_workflow "v1" "$yaml_path" "$label" "$v1_log"
+    mapfile -t v1_jobs < <(extract_job_ids "$v1_log")
+    if [[ "${#v1_jobs[@]}" -eq 0 ]]; then
+        echo "Error: no SLURM job IDs captured for $label v1" >&2
+        exit 1
+    fi
+    echo "Captured ${#v1_jobs[@]} v1 SLURM job ID(s) for $label."
+    echo "These include every v1 job printed by stats_trimmed.run: dataset,"
+    echo "forecast chunk, merge, statistics, and cleanup jobs."
+
+    v4_start="$(date +%s)"
+    submit_workflow "v4" "$yaml_path" "$label" "$v4_log"
+    mapfile -t v4_jobs < <(extract_job_ids "$v4_log")
+    if [[ "${#v4_jobs[@]}" -eq 0 ]]; then
+        echo "Error: no SLURM job IDs captured for $label v4" >&2
+        exit 1
+    fi
+    echo "Captured ${#v4_jobs[@]} v4 SLURM job ID(s) for $label."
+
+    local v1_job_list
+    local v4_job_list
+    v1_job_list="$(IFS=,; echo "${v1_jobs[*]}")"
+    v4_job_list="$(IFS=,; echo "${v4_jobs[*]}")"
+    wait_for_experiment_jobs "$label" "$v1_start" "$v4_start" \
+        "$v1_job_list" "$v4_job_list" "${#v1_jobs[@]}" "${#v4_jobs[@]}"
+
+    echo
+    echo "Completed $label experiment"
+    local result_index
+    result_index="$((${#result_labels[@]} - 1))"
+    echo "  v1 elapsed: $(elapsed_hms "${result_v1_seconds[$result_index]}")"
+    echo "  v4 elapsed: $(elapsed_hms "${result_v4_seconds[$result_index]}")"
+}
+
+print_summary() {
+    echo
+    echo "======================================================================"
+    echo "STEP 12 OLD VS NEW TIMING SUMMARY"
+    echo "======================================================================"
+    printf '%-12s %-14s %-14s %-14s\n' "Experiment" "v1 elapsed" "v4 elapsed" "v4-v1"
+
+    local i
+    for i in "${!result_labels[@]}"; do
+        local v1="${result_v1_seconds[$i]}"
+        local v4="${result_v4_seconds[$i]}"
+        local delta="$((v4 - v1))"
+        local delta_text
+        if ((delta < 0)); then
+            local abs_delta="$((-delta))"
+            delta_text="-$(elapsed_hms "$abs_delta")"
+        else
+            delta_text="+$(elapsed_hms "$delta")"
+        fi
+        printf '%-12s %-14s %-14s %-14s\n' \
+            "${result_labels[$i]}" \
+            "$(elapsed_hms "$v1")" \
+            "$(elapsed_hms "$v4")" \
+            "$delta_text"
+    done
+}
+
+require_file "$short_yaml"
+require_file "$long_yaml"
+require_file "${repo_dir}/v1/stats_trimmed.run"
+require_file "${repo_dir}/v4/sbatch_stats_v4.run"
+
+echo "Step 12 old vs new workflow comparison"
+echo "Repo: $repo_dir"
+echo "Short YAML: $short_yaml"
+echo "Long YAML:  $long_yaml"
+echo "Poll interval: ${poll_seconds}s"
+
+run_side_by_side_experiment "short" "$short_yaml"
+run_side_by_side_experiment "long" "$long_yaml"
+print_summary
