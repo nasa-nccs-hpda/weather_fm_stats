@@ -1281,8 +1281,13 @@ class StatisticsProcessor:
                     print(f'[INFO] Loaded base dataset with '
                           f'{len(merged_ds.init_date)} init dates')
                 else:
-                    merged_ds = xr.concat([merged_ds, current_ds],
-                                          dim='init_date')
+                    merged_ds = xr.concat(
+                        [merged_ds, current_ds],
+                        dim='init_date',
+                        data_vars='all',
+                        coords='different',
+                        compat='equals',
+                    )
                     print(f'[INFO] Merged dataset now has '
                           f'{len(merged_ds.init_date)} init dates')
                     current_ds.close()

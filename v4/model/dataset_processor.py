@@ -2101,7 +2101,13 @@ class BatchDatasetProcessor:
             # Combine climatology
             for i, ds in enumerate(clim_list):
                 clim_list[i] = ds.assign_coords(time=[times[i]])
-            combined_clim = xr.concat(clim_list, dim='time')
+                combined_clim = xr.concat(
+                    clim_list,
+                    dim='time',
+                    data_vars='all',
+                    coords='different',
+                    compat='equals',
+                )
             combined_clim = self._clean_and_filter_dataset(
                 combined_clim, ['time', 'lev', 'lat', 'lon'], 'clim',
                 val_results, skip_calc_mode)
@@ -2149,7 +2155,13 @@ class BatchDatasetProcessor:
             sorted_times = [t for t, _ in sorted_pairs]
             for i, ds in enumerate(sorted_ana):
                 sorted_ana[i] = ds.assign_coords(time=[sorted_times[i]])
-            combined_ana = xr.concat(sorted_ana, dim='time')
+            combined_ana = xr.concat(
+                sorted_ana,
+                dim='time',
+                data_vars='all',
+                coords='different',
+                compat='equals',
+            )
             combined_ana = self._clean_and_filter_dataset(
                 combined_ana, ['time', 'lev', 'lat', 'lon'], 'ana',
                 val_results, skip_calc_mode)
@@ -2182,10 +2194,22 @@ class BatchDatasetProcessor:
                 for fhour in sorted(forecast_dict[init_date].keys()):
                     lead_datasets.append(forecast_dict[init_date][fhour])
 
-                init_ds = xr.concat(lead_datasets, dim='lead')
+                init_ds = xr.concat(
+                    lead_datasets,
+                    dim='lead',
+                    data_vars='all',
+                    coords='different',
+                    compat='equals',
+                )
                 init_ds = init_ds.assign_coords(init_date=init_date)
                 init_date_datasets.append(init_ds)
-            combined_fcst = xr.concat(init_date_datasets, dim='init_date')
+            combined_fcst = xr.concat(
+                init_date_datasets,
+                dim='init_date',
+                data_vars='all',
+                coords='different',
+                compat='equals',
+            )
             combined_fcst = self._clean_and_filter_dataset(
                 combined_fcst, ['init_date', 'lead', 'lev', 'lat', 'lon'],
                 'fcst', val_results, skip_calc_mode)
@@ -3237,8 +3261,13 @@ class BatchDatasetProcessor:
                         print(f'[INFO] Loaded base dataset with '
                               f'{len(merged_ds.init_date)} init dates')
                     else:
-                        merged_ds = xr.concat([merged_ds, current_ds],
-                                              dim='init_date')
+                        merged_ds = xr.concat(
+                            [merged_ds, current_ds],
+                            dim='init_date',
+                            data_vars='all',
+                            coords='different',
+                            compat='equals',
+                        )
                         print(f'[INFO] Merged dataset now has '
                               f'{len(merged_ds.init_date)} init dates')
                         current_ds.close()
@@ -3373,8 +3402,13 @@ class BatchDatasetProcessor:
                         print(f'[INFO] Loaded base dataset with '
                               f'{len(merged_ds.time)} times')
                     else:
-                        merged_ds = xr.concat([merged_ds, current_ds],
-                                              dim='time')
+                        merged_ds = xr.concat(
+                            [merged_ds, current_ds],
+                            dim='time',
+                            data_vars='all',
+                            coords='different',
+                            compat='equals',
+                        )
                         print(f'[INFO] Merged dataset now has '
                               f'{len(merged_ds.time)} times')
                         current_ds.close()
