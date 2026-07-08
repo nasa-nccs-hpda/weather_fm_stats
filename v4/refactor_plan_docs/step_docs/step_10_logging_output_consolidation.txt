@@ -87,6 +87,20 @@ Implementation Notes
   explicit chunk/failure label to aid debugging.
 - Stage 2 existing-dataset setup/check calls are also captured in normal mode
   to reduce repeated target-grid and validation banners during reused runs.
+- Renamed pipeline "stages" to "phases" in the main pipeline log output.
+- Added explicit phase separators and 80-character phase footers so each
+  phase's resource END line is visually separated from the next phase.
+- Reworked the final console summary and run_summary.txt to separate
+  OUTPUTS AND STATUS, RESOURCE USAGE, and TIMING.
+- Added overall Python pipeline wall time to the final summary and
+  run_summary.txt.
+- Grouped dataset sub-step resource/timing lines under fcst, ana, clim, and
+  source headings; statistics branch resource/timing lines are reported under
+  regional/global branch headings.
+- Added a best-effort pipeline exception summary path. If an uncaught exception
+  occurs after runtime settings are available, the top-level handler writes a
+  FAILURE run_summary.txt with collected phase metrics, dataset timings,
+  branch results, and a _pipeline_exception record.
 
 Remaining Work
 - Further consolidate parent-process normal output into forecast, analysis,

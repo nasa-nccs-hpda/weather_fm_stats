@@ -512,7 +512,7 @@ class BatchDatasetProcessor:
     def _check_for_existing_datasets(self, stats_only_mode: bool = False
                                      ) -> Dict[str, str]:
         '''Check for already-processed datasets in specified directories'''
-        print('\n--- Checking for existing datasets ---')
+        print('\n  --- Checking for existing datasets ---')
         # Get search directories from config
         search_dirs = self.config['dir_loc']
         # Build expected files dict for enabled datasets only
@@ -2002,7 +2002,7 @@ class BatchDatasetProcessor:
             val_results=None, skip_calc_mode=False, clim_valid_times=None):
         '''Combine individual files into structured datasets (clim/ana/fcst)'''
 
-        print('\n--- Combining into structured datasets ---')
+        print('\n  --- Combining into structured datasets ---')
         combined_datasets = {}
 
         # CLIMATOLOGY: process/combine for valid times
@@ -2365,7 +2365,7 @@ class BatchDatasetProcessor:
 
     def _inspect_combined_data(self, combined_datasets):
         '''Inspect the final combined datasets'''
-        print('\n--- Final Combined Datasets ---')
+        print('\n  --- Final Combined Datasets ---')
 
         for name, ds in combined_datasets.items():
             print(f'\n{name.upper()} DATASET:')
@@ -2408,7 +2408,7 @@ class BatchDatasetProcessor:
         if 'datasets' not in results:
             return
 
-        print('\n--- Saving datasets ---')
+        print('\n  --- Saving datasets ---')
         datasets = results['datasets']
         existing_datasets = results.get('existing_datasets', {})
         saved_count = 0
@@ -2511,10 +2511,10 @@ class BatchDatasetProcessor:
                       ana_valid_times=None, clim_valid_times=None):
         '''Main batch processing method'''
         if target_coll:
-            print(f'\n=== Collection-Specific Batch Processing: '
+            print(f'\n  === Collection-Specific Batch Processing: '
                   f'{target_coll} ===')
         else:
-            print('\n=== Multi-Variable Batch Forecast Processing ===')
+            print('\n  === Multi-Variable Batch Forecast Processing ===')
         print(f'Target variables: 3D={self.all_vars_3d}, '
               f'2D={self.all_vars_2d}')
 
@@ -2607,7 +2607,7 @@ class BatchDatasetProcessor:
             print('[INFO] Single forecast mode: skipping existing dataset '
                   'check')
         if existing_datasets:
-            print('\n--- Validating existing datasets ---')
+            print('\n  --- Validating existing datasets ---')
         validation_errors = []
         datasets_to_reprocess = []
         for dataset_type, file_path in list(existing_datasets.items()):
@@ -2741,7 +2741,7 @@ class BatchDatasetProcessor:
 
 
         # Step 1: Check complete file availability
-        print('\n--- Step 1: Checking complete file availability ---')
+        print('\n  --- Step 1: Checking complete file availability ---')
         all_files =     {'fcst': {}, 'ana': {}, 'clim': {}}
         missing_files = {'fcst': [], 'ana': [], 'clim': []}
         missing_paths = {'fcst': {}, 'ana': {}, 'clim': {}}
@@ -3056,7 +3056,7 @@ class BatchDatasetProcessor:
             }
 
         # Show detailed file summary - only for datasets being processed
-        print('\n--- File Summary ---')
+        print('\n  --- File Summary ---')
         for file_type, file_dict in all_files.items():
             if ((file_type == 'fcst' and process_fcst) or
                 (file_type == 'ana' and process_ana) or
@@ -3081,7 +3081,7 @@ class BatchDatasetProcessor:
                         print(f'      - {os.path.basename(file_path)}')
 
         # Step 2: Validate variables and pressure levels with sample files
-        print('\n--- Step 2: Validating variables and pressure levels with '
+        print('\n  --- Step 2: Validating variables and pressure levels with '
               'sample files ---')
         # Store validation results
         validation_errors = []
@@ -3127,7 +3127,7 @@ class BatchDatasetProcessor:
         print('\n  [SUCCESS] All variables and levels validated successfully')
 
         # Step 3: Process all files
-        print('\n--- Step 3: Processing all files ---')
+        print('\n  --- Step 3: Processing all files ---')
         loaded_data = {}
 
         if process_fcst and all_files['fcst']:
@@ -3190,9 +3190,9 @@ class BatchDatasetProcessor:
         info_dir: directory containing the tmp folder with chunk files
         Returns: True if merge was successful, False otherwise
         '''
-        print('\n==================================================')
-        print('MERGING FORECAST CHUNKS')
-        print('==================================================')
+        print('\n  ==================================================')
+        print('  MERGING FORECAST CHUNKS')
+        print('  ==================================================')
 
         # Find and organize chunk files
         if chunk_specs is None:
@@ -3347,9 +3347,9 @@ class BatchDatasetProcessor:
     def merge_time_chunks(self, dataset_type: str, info_dir: str,
                           chunk_specs) -> bool:
         '''Merge analysis/climatology time chunks in chunk-plan order.'''
-        print('\n==================================================')
-        print(f'MERGING {dataset_type.upper()} TIME CHUNKS')
-        print('==================================================')
+        print('\n  ==================================================')
+        print(f'  MERGING {dataset_type.upper()} TIME CHUNKS')
+        print('  ==================================================')
 
         if dataset_type not in ['ana', 'clim']:
             print(f'[ERROR] Invalid time-chunk dataset type: {dataset_type}')
@@ -3483,9 +3483,9 @@ class BatchDatasetProcessor:
         info_dir: directory containing the tmp folder with collection files
         Returns: True if merge was successful, False otherwise
         '''
-        print('\n==================================================')
-        print(f'MERGING COLLECTION DATASETS: {dataset_type.upper()}')
-        print('==================================================')
+        print('\n  ==================================================')
+        print(f'  MERGING COLLECTION DATASETS: {dataset_type.upper()}')
+        print('  ==================================================')
 
         # Find and organize collection files
         pattern = f'outputs/{info_dir}/tmp/{dataset_type}_*_*.nc4'

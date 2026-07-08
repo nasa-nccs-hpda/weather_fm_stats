@@ -17,6 +17,9 @@ from model.statistics_parallel_executor import (
 )
 from model.statistics_processor import StatisticsProcessor
 
+
+PIPELINE_RUN_CONTEXT = {}
+
 # ================== MAIN FUNCTION ==================
 
 
@@ -83,8 +86,8 @@ def _slurm_memory_mb():
 
 
 @contextmanager
-def record_pipeline_stage(stage_metrics, stage_name):
-    '''Record wall time, CPU time, and memory around one pipeline stage.'''
+def record_pipeline_phase(phase_metrics, phase_name):
+    '''Record wall time, CPU time, and memory around one pipeline phase.'''
     start_wall = time.time()
     start_cpu = _cpu_total_seconds()
     start_current_rss = _read_current_rss_mb()
@@ -92,7 +95,7 @@ def record_pipeline_stage(stage_metrics, stage_name):
     start_child_max_rss = _read_max_rss_mb(include_children=True)
     cpu_count = _allocated_cpu_count()
 
-    print(f'[RESOURCE] START {stage_name}: '
+    print(f'[RESOURCE] START {phase_name}: '
           f'current_rss_mb={start_current_rss} '
           f'max_rss_mb={start_max_rss} cpus={cpu_count} '
           f'slurm_mem_mb={_slurm_memory_mb()}')
@@ -117,7 +120,8 @@ def record_pipeline_stage(stage_metrics, stage_name):
         ]
         max_rss_mb = max(max_rss_values) if max_rss_values else None
         record = {
-            'stage': stage_name,
+            'phase': phase_name,
+            'stage': phase_name,
             'wall_seconds': wall_seconds,
             'cpu_seconds': cpu_seconds,
             'cpu_percent_of_allocation': cpu_percent_of_allocation,
@@ -129,8 +133,8 @@ def record_pipeline_stage(stage_metrics, stage_name):
             'children_max_rss_mb': end_child_max_rss,
             'slurm_mem_mb': _slurm_memory_mb(),
         }
-        stage_metrics.append(record)
-        print(f'[RESOURCE] END {stage_name}: '
+        phase_metrics.append(record)
+        print(f'[RESOURCE] END {phase_name}: '
               f'wall_seconds={wall_seconds} cpu_seconds={cpu_seconds} '
               f'cpu_pct_of_alloc={cpu_percent_of_allocation} '
               f'end_current_rss_mb={end_current_rss} '
@@ -431,6 +435,19 @@ def print_runtime_contract(runtime_settings):
     print(f'  chunk_size_stats={runtime_settings.pipeline_chunk_size_stats}')
 
 
+def print_pipeline_phase_header(phase_number, total_phases, title):
+    '''Print a consistent ASCII pipeline phase separator.'''
+    line = '=' * 72
+    print(f'\n{line}')
+    print(f'PHASE {phase_number}/{total_phases}: {title}')
+    print(line)
+
+
+def print_pipeline_phase_footer():
+    '''Print a separator after one pipeline phase completes.'''
+    print('=' * 80)
+
+
 def run_stats_branch(stats_kind, processor_config, dataset_files, init_dates,
                      leads, info_dir, runtime_settings=None):
     '''Run one statistics branch and return status/error.'''
@@ -491,9 +508,133 @@ def skipped_branch_result(branch_name, reason, branch_order,
     }
 
 
+def _summary_separator(title=None):
+    '''Print an 80-character summary separator with an optional title.'''
+    line = '=' * 80
+    print(line)
+    if title:
+        print(title)
+        print(line)
+
+
+def _fmt_seconds(value):
+    '''Format seconds for human-readable summaries.'''
+    if value is None:
+        return 'n/a'
+    return f'{value}s'
+
+
+def _fmt_value(value):
+    '''Format possibly missing summary values.'''
+    return 'n/a' if value is None else str(value)
+
+
+def _dataset_timing_groups(dataset_timings):
+    '''Group dataset timing records by pipeline dataset prefix.'''
+    groups = []
+    group_map = {}
+    for timing in dataset_timings:
+        name = timing['name']
+        if name.startswith('fcst_'):
+            group_name = 'fcst'
+        elif name.startswith('ana_'):
+            group_name = 'ana'
+        elif name.startswith('clim_'):
+            group_name = 'clim'
+        elif name.startswith('source_'):
+            group_name = 'source'
+        else:
+            group_name = 'other'
+        if group_name not in group_map:
+            group_map[group_name] = []
+            groups.append((group_name, group_map[group_name]))
+        group_map[group_name].append(timing)
+    return groups
+
+
+def _print_resource_summary(phase_metrics, dataset_timings, branch_results,
+                            pipeline_max_memory):
+    '''Print hierarchical resource usage summary.'''
+    _summary_separator('RESOURCE USAGE')
+    if pipeline_max_memory is not None:
+        print(f'  pipeline max RSS: {pipeline_max_memory} MB')
+    print('  phases:')
+    for metric in phase_metrics:
+        print(f'    {metric["phase"]}: '
+              f'max_rss_mb={_fmt_value(metric["max_rss_mb"])} '
+              f'cpu_seconds={_fmt_value(metric["cpu_seconds"])} '
+              f'cpu_pct_alloc='
+              f'{_fmt_value(metric["cpu_percent_of_allocation"])}')
+    if dataset_timings:
+        print('  dataset sub-steps:')
+        for group_name, timings in _dataset_timing_groups(dataset_timings):
+            print(f'    {group_name}:')
+            for timing in timings:
+                print(f'      {timing["name"]}: '
+                      f'cpu_seconds={_fmt_value(timing.get("cpu_seconds"))} '
+                      f'cpu_pct_alloc='
+                      f'{_fmt_value(timing.get("cpu_percent_of_allocation"))} '
+                      f'allocated_cpus='
+                      f'{_fmt_value(timing.get("allocated_cpus"))}')
+    if branch_results:
+        print('  statistics branches:')
+        for branch_name, result in branch_results.items():
+            print(f'    {branch_name}: '
+                  f'max_memory_mb='
+                  f'{_fmt_value(result.get("max_memory_mb"))} '
+                  f'max_workers={_fmt_value(result.get("max_workers"))} '
+                  f'configured_workers='
+                  f'{_fmt_value(result.get("configured_max_workers"))}')
+
+
+def _print_timing_summary(phase_metrics, dataset_timings, branch_results,
+                          pipeline_wall_seconds):
+    '''Print hierarchical timing summary.'''
+    _summary_separator('TIMING')
+    print(f'  overall python pipeline: {_fmt_seconds(pipeline_wall_seconds)}')
+    print('  phases:')
+    for metric in phase_metrics:
+        print(f'    {metric["phase"]}: '
+              f'wall={_fmt_seconds(metric["wall_seconds"])}')
+    if dataset_timings:
+        print('  dataset sub-steps:')
+        for group_name, timings in _dataset_timing_groups(dataset_timings):
+            print(f'    {group_name}:')
+            for timing in timings:
+                print(f'      {timing["name"]}: '
+                      f'wall={_fmt_seconds(timing["wall_seconds"])}')
+    if branch_results:
+        print('  statistics branches:')
+        for branch_name, result in branch_results.items():
+            print(f'    {branch_name}: '
+                  f'wall={_fmt_seconds(result.get("wall_seconds"))} '
+                  f'status={result["status"]}')
+
+
+def _print_output_summary(branch_results):
+    '''Print branch/output status summary.'''
+    _summary_separator('OUTPUTS AND STATUS')
+    for branch_name, branch_result in branch_results.items():
+        print(f'  {branch_name}: {branch_result["status"]}')
+        if branch_result.get('error'):
+            print(f'    error={branch_result["error"]}')
+        if branch_result.get('reuse_reason'):
+            print(f'    reuse_reason={branch_result["reuse_reason"]}')
+        if 'chunk_count' in branch_result:
+            print(f'    chunks={branch_result["chunk_count"]} '
+                  f'required={branch_result["required_chunk_count"]} '
+                  f'skipped={branch_result["skipped_chunk_count"]} '
+                  f'completed={branch_result.get("completed_chunk_count")} '
+                  f'failed={branch_result.get("failed_chunk_count")}')
+        if branch_result.get('output_path'):
+            print(f'    output={branch_result["output_path"]} '
+                  f'exists={branch_result.get("output_exists")}')
+
+
 def write_pipeline_summary(info_dir, runtime_settings, branch_results,
-                           final_status, stage_metrics=None,
-                           dataset_timings=None):
+                           final_status, phase_metrics=None,
+                           dataset_timings=None,
+                           pipeline_wall_seconds=None):
     '''Write run summary file for pipeline mode.'''
     if not info_dir:
         return
@@ -502,11 +643,12 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
     summary_path = os.path.join(summary_dir,
                                 runtime_settings.pipeline_summary_file)
     pipeline_max_memory = None
-    stage_metrics = stage_metrics or []
+    phase_metrics = phase_metrics or []
     dataset_timings = dataset_timings or []
     with open(summary_path, 'w', encoding='utf-8') as f:
         f.write('v4 pipeline summary\n')
         f.write(f'final_status: {final_status}\n')
+        f.write(f'pipeline_wall_seconds: {pipeline_wall_seconds}\n')
         f.write(f'stats_types: {runtime_settings.stats_types}\n')
         f.write(f'pipeline_fail_policy: '
                 f'{runtime_settings.pipeline_fail_policy}\n')
@@ -576,10 +718,10 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
         if memory_values:
             pipeline_max_memory = max(memory_values)
             f.write(f'pipeline_max_memory_mb: {pipeline_max_memory}\n')
-        if stage_metrics:
-            f.write('\nstage_resource_summary:\n')
-            for metric in stage_metrics:
-                prefix = metric['stage'].replace(' ', '_').lower()
+        if phase_metrics:
+            f.write('\nphase_resource_summary:\n')
+            for metric in phase_metrics:
+                prefix = metric['phase'].replace(' ', '_').lower()
                 f.write(f'{prefix}_wall_seconds: '
                         f'{metric["wall_seconds"]}\n')
                 f.write(f'{prefix}_cpu_seconds: '
@@ -611,53 +753,106 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
                         f'{timing.get("cpu_percent_of_allocation")}\n')
                 f.write(f'{timing["name"]}_allocated_cpus: '
                         f'{timing.get("allocated_cpus")}\n')
+        f.write('\n' + '=' * 80 + '\n')
+        f.write('RESOURCE USAGE\n')
+        f.write('=' * 80 + '\n')
+        f.write(f'pipeline_max_memory_mb: {pipeline_max_memory}\n')
+        f.write('phases:\n')
+        for metric in phase_metrics:
+            f.write(f'  {metric["phase"]}: '
+                    f'max_rss_mb={metric["max_rss_mb"]} '
+                    f'cpu_seconds={metric["cpu_seconds"]} '
+                    f'cpu_pct_alloc='
+                    f'{metric["cpu_percent_of_allocation"]}\n')
+        if dataset_timings:
+            f.write('dataset sub-steps:\n')
+            for group_name, timings in _dataset_timing_groups(dataset_timings):
+                f.write(f'  {group_name}:\n')
+                for timing in timings:
+                    f.write(f'    {timing["name"]}: '
+                            f'cpu_seconds={timing.get("cpu_seconds")} '
+                            f'cpu_pct_alloc='
+                            f'{timing.get("cpu_percent_of_allocation")} '
+                            f'allocated_cpus='
+                            f'{timing.get("allocated_cpus")}\n')
+        if branch_results:
+            f.write('statistics branches:\n')
+            for branch_name, result in branch_results.items():
+                f.write(f'  {branch_name}: '
+                        f'max_memory_mb={result.get("max_memory_mb")} '
+                        f'max_workers={result.get("max_workers")} '
+                        f'configured_workers='
+                        f'{result.get("configured_max_workers")}\n')
+        f.write('\n' + '=' * 80 + '\n')
+        f.write('TIMING\n')
+        f.write('=' * 80 + '\n')
+        f.write(f'overall_python_pipeline: '
+                f'{pipeline_wall_seconds}s\n')
+        f.write('phases:\n')
+        for metric in phase_metrics:
+            f.write(f'  {metric["phase"]}: '
+                    f'wall={metric["wall_seconds"]}s\n')
+        if dataset_timings:
+            f.write('dataset sub-steps:\n')
+            for group_name, timings in _dataset_timing_groups(dataset_timings):
+                f.write(f'  {group_name}:\n')
+                for timing in timings:
+                    f.write(f'    {timing["name"]}: '
+                            f'wall={timing["wall_seconds"]}s\n')
+        if branch_results:
+            f.write('statistics branches:\n')
+            for branch_name, result in branch_results.items():
+                f.write(f'  {branch_name}: '
+                        f'wall={result.get("wall_seconds")}s '
+                        f'status={result["status"]}\n')
     print(f'[INFO] Pipeline summary written: {summary_path}')
-    print('[INFO] Pipeline final summary:')
-    for branch_name, branch_result in branch_results.items():
-        print(f'  {branch_name}: {branch_result["status"]}')
-        if branch_result.get('error'):
-            print(f'    error={branch_result["error"]}')
-        if branch_result.get('reuse_reason'):
-            print(f'    reuse_reason={branch_result["reuse_reason"]}')
-        if 'chunk_count' in branch_result:
-            print(f'    chunks={branch_result["chunk_count"]} '
-                  f'required={branch_result["required_chunk_count"]} '
-                  f'skipped={branch_result["skipped_chunk_count"]} '
-                  f'completed={branch_result.get("completed_chunk_count")} '
-                  f'failed={branch_result.get("failed_chunk_count")}')
-        if 'chunk_size' in branch_result:
-            print(f'    chunk_size={branch_result["chunk_size"]}')
-        if 'max_workers' in branch_result:
-            print(f'    max_workers={branch_result["max_workers"]}')
-        if 'configured_max_workers' in branch_result:
-            print(f'    configured_max_workers='
-                  f'{branch_result["configured_max_workers"]}')
-        if branch_result.get('max_memory_mb') is not None:
-            print(f'    max_memory_mb={branch_result["max_memory_mb"]}')
-        if branch_result.get('wall_seconds') is not None:
-            print(f'    wall_seconds={branch_result["wall_seconds"]}')
-        if branch_result.get('output_path'):
-            print(f'    output={branch_result["output_path"]} '
-                  f'exists={branch_result.get("output_exists")}')
-    if pipeline_max_memory is not None:
-        print(f'  pipeline_max_memory_mb={pipeline_max_memory}')
-    if stage_metrics:
-        print('  stage resource usage:')
-        for metric in stage_metrics:
-            print(f'    {metric["stage"]}: '
-                  f'wall={metric["wall_seconds"]}s '
-                  f'cpu={metric["cpu_seconds"]}s '
-                  f'cpu_pct_alloc={metric["cpu_percent_of_allocation"]} '
-                  f'max_rss_mb={metric["max_rss_mb"]}')
-    if dataset_timings:
-        print('  dataset timing:')
-        for timing in dataset_timings:
-            print(f'    {timing["name"]}: '
-                  f'wall={timing["wall_seconds"]}s '
-                  f'cpu={timing.get("cpu_seconds")}s '
-                  f'cpu_pct_alloc='
-                  f'{timing.get("cpu_percent_of_allocation")} '
-                  f'allocated_cpus={timing.get("allocated_cpus")}')
+    _summary_separator('PIPELINE FINAL SUMMARY')
+    print(f'  final_status: {final_status}')
+    print(f'  pipeline_wall_seconds: {_fmt_seconds(pipeline_wall_seconds)}')
+    print(f'  stats_types: {runtime_settings.stats_types}')
+    print(f'  resume_mode: {runtime_settings.pipeline_resume_mode}')
+    _print_output_summary(branch_results)
+    _print_resource_summary(phase_metrics, dataset_timings, branch_results,
+                            pipeline_max_memory)
+    _print_timing_summary(phase_metrics, dataset_timings, branch_results,
+                          pipeline_wall_seconds)
+
+
+def write_pipeline_exception_summary(args, exc):
+    '''Write a best-effort failure summary after an uncaught pipeline error.'''
+    try:
+        context = PIPELINE_RUN_CONTEXT
+        runtime_settings = context.get('runtime_settings')
+        if not runtime_settings or not getattr(args, 'info_dir', None):
+            return False
+        pipeline_start = context.get('pipeline_start')
+        pipeline_wall_seconds = None
+        if pipeline_start is not None:
+            pipeline_wall_seconds = round(time.time() - pipeline_start, 2)
+        branch_results = context.get('branch_results') or {}
+        if branch_results:
+            branch_results = dict(branch_results)
+        branch_results['_pipeline_exception'] = {
+            'status': 'FAILURE',
+            'error': str(exc),
+            'branch': '_pipeline_exception',
+            'execution_mode': 'pipeline',
+            'wall_seconds': 0.0,
+        }
+        write_pipeline_summary(
+            args.info_dir,
+            runtime_settings,
+            branch_results,
+            'FAILURE',
+            phase_metrics=context.get('phase_metrics') or [],
+            dataset_timings=context.get('dataset_timings') or [],
+            pipeline_wall_seconds=pipeline_wall_seconds,
+        )
+        return True
+    except Exception as summary_exc:
+        print(f'[WARNING] Could not write pipeline failure summary: '
+              f'{summary_exc}')
+        return False
 
 
 def run_pipeline_mode(args, single_fcst_mode):
@@ -665,28 +860,43 @@ def run_pipeline_mode(args, single_fcst_mode):
     print('\n==================================================')
     print('V4 SINGLE-JOB PIPELINE')
     print('==================================================')
-    stage_metrics = []
-    print('[INFO] Stage 1/4: Preflight')
+    pipeline_start = time.time()
+    phase_metrics = []
+    dataset_timings = []
+    branch_results = {}
+    PIPELINE_RUN_CONTEXT.clear()
+    PIPELINE_RUN_CONTEXT.update({
+        'pipeline_start': pipeline_start,
+        'phase_metrics': phase_metrics,
+        'dataset_timings': dataset_timings,
+        'branch_results': branch_results,
+        'runtime_settings': None,
+    })
+    print_pipeline_phase_header(1, 4, 'Preflight')
 
-    with record_pipeline_stage(stage_metrics, 'stage_1_preflight'):
+    with record_pipeline_phase(phase_metrics, 'phase_1_preflight'):
         processor = BatchDatasetProcessor.from_yaml(args.config,
                                                     single_fcst_mode)
         runtime_settings = resolve_runtime_settings(args, processor.config)
+        PIPELINE_RUN_CONTEXT['runtime_settings'] = runtime_settings
         print_runtime_contract(runtime_settings)
         if runtime_settings.pipeline_resume_mode == 'safe':
             print('[INFO] Resume mode is safe '
                   '(validated final outputs may be reused; chunk-level '
                   'checkpointing is not enabled)')
+    print_pipeline_phase_footer()
 
-    print('[INFO] Stage 2/4: Source dataset build')
-    with record_pipeline_stage(stage_metrics, 'stage_2_source_dataset_build'):
+    print_pipeline_phase_header(2, 4, 'Source dataset build')
+    with record_pipeline_phase(phase_metrics, 'phase_2_source_dataset_build'):
         results = run_parallel_source_dataset_build(
             args.config,
             args.info_dir,
             runtime_settings,
             single_fcst_mode=single_fcst_mode,
         )
+    print_pipeline_phase_footer()
     dataset_timings = results.get('timings', [])
+    PIPELINE_RUN_CONTEXT['dataset_timings'] = dataset_timings
 
     if results.get('status') != 'success':
         reason = results.get('reason', 'Unknown error')
@@ -694,8 +904,10 @@ def run_pipeline_mode(args, single_fcst_mode):
         for err in results.get('errors', []):
             print(f'  [ERROR] {err}')
         write_pipeline_summary(args.info_dir, runtime_settings, {},
-                               'FAILURE', stage_metrics=stage_metrics,
-                               dataset_timings=dataset_timings)
+                               'FAILURE', phase_metrics=phase_metrics,
+                               dataset_timings=dataset_timings,
+                               pipeline_wall_seconds=round(
+                                   time.time() - pipeline_start, 2))
         return 1
 
     dataset_files = results.get('dataset_files', {})
@@ -708,18 +920,22 @@ def run_pipeline_mode(args, single_fcst_mode):
         print(f'[ERROR] Missing datasets for stats: '
               f'{", ".join(sorted(missing_datasets))}')
         write_pipeline_summary(args.info_dir, runtime_settings, {},
-                               'FAILURE', stage_metrics=stage_metrics,
-                               dataset_timings=dataset_timings)
+                               'FAILURE', phase_metrics=phase_metrics,
+                               dataset_timings=dataset_timings,
+                               pipeline_wall_seconds=round(
+                                   time.time() - pipeline_start, 2))
         return 1
     if not init_dates or not leads:
         print('[ERROR] Missing init dates or lead times for statistics')
         write_pipeline_summary(args.info_dir, runtime_settings, {},
-                               'FAILURE', stage_metrics=stage_metrics,
-                               dataset_timings=dataset_timings)
+                               'FAILURE', phase_metrics=phase_metrics,
+                               dataset_timings=dataset_timings,
+                               pipeline_wall_seconds=round(
+                                   time.time() - pipeline_start, 2))
         return 1
-    print(f'[INFO] RESULTS FROM STAGE 2 (datasets): {dataset_files}')
+    print(f'[INFO] RESULTS FROM PHASE 2 (datasets): {dataset_files}')
 
-    print('[INFO] Stage 3/4: Statistics branches')
+    print_pipeline_phase_header(3, 4, 'Statistics branches')
     requested_branches = []
     if runtime_settings.stats_types in ['regional', 'both']:
         requested_branches.append('regional')
@@ -730,9 +946,8 @@ def run_pipeline_mode(args, single_fcst_mode):
     print(f'[INFO] Requested statistics branch order: '
           f'{", ".join(requested_branches)}')
 
-    branch_results = {}
     fail_fast_triggered = False
-    with record_pipeline_stage(stage_metrics, 'stage_3_statistics_branches'):
+    with record_pipeline_phase(phase_metrics, 'phase_3_statistics_branches'):
         for branch_index, branch in enumerate(requested_branches, start=1):
             print(f'[INFO] Running {branch} statistics branch '
                   f'({branch_index}/{len(requested_branches)})...')
@@ -766,11 +981,14 @@ def run_pipeline_mode(args, single_fcst_mode):
                             skipped_index + 1,
                             len(requested_branches))
                 break
+    print_pipeline_phase_footer()
     if fail_fast_triggered:
         write_pipeline_summary(args.info_dir, runtime_settings,
                                branch_results, 'FAILURE',
-                               stage_metrics=stage_metrics,
-                               dataset_timings=dataset_timings)
+                               phase_metrics=phase_metrics,
+                               dataset_timings=dataset_timings,
+                               pipeline_wall_seconds=round(
+                                   time.time() - pipeline_start, 2))
         return 1
 
     success_count = sum(1 for r in branch_results.values()
@@ -785,12 +1003,15 @@ def run_pipeline_mode(args, single_fcst_mode):
         final_status = 'PARTIAL_FAILURE'
         exit_code = 1
 
-    print('[INFO] Stage 4/4: Finalize')
-    with record_pipeline_stage(stage_metrics, 'stage_4_finalize'):
+    print_pipeline_phase_header(4, 4, 'Finalize')
+    with record_pipeline_phase(phase_metrics, 'phase_4_finalize'):
         pass
+    print_pipeline_phase_footer()
+    pipeline_wall_seconds = round(time.time() - pipeline_start, 2)
     write_pipeline_summary(args.info_dir, runtime_settings, branch_results,
-                           final_status, stage_metrics=stage_metrics,
-                           dataset_timings=dataset_timings)
+                           final_status, phase_metrics=phase_metrics,
+                           dataset_timings=dataset_timings,
+                           pipeline_wall_seconds=pipeline_wall_seconds)
     if final_status == 'SUCCESS':
         print('\n[SUCCESS] Pipeline completed successfully')
     elif final_status == 'PARTIAL_FAILURE':
@@ -832,12 +1053,12 @@ def main():
         # (except in single-forecast mode which needs both)
         if not (args.stats and not args.process) or args.date:
 
-            print('\n==================================================')
+            print('\n  ==================================================')
             if args.stats:
-                print('DATASET CREATION AND STATISTICS CALCULATION')
+                print('  DATASET CREATION AND STATISTICS CALCULATION')
             else:
-                print('DATASET CREATION')
-            print('==================================================')
+                print('  DATASET CREATION')
+            print('  ==================================================')
 
             processor = BatchDatasetProcessor.from_yaml(args.config,
                                                         single_fcst_mode)
@@ -881,9 +1102,9 @@ def main():
 
         # Phase 2: Statistics Calculation
         if args.stats or args.date:  # also run in single-fcst mode
-            print('\n==================================================')
-            print('STATISTICS CALCULATION')
-            print('==================================================')
+            print('\n  ==================================================')
+            print('  STATISTICS CALCULATION')
+            print('  ==================================================')
 
             # Initialize needed variables if in stats-only mode
             if not dataset_files or not init_dates or not leads:
@@ -963,14 +1184,17 @@ def main():
         print('\n[SUCCESS] All requested operations completed!')
     except FileNotFoundError as e:
         print(f'\n[ERROR] File not found: {e}')
+        write_pipeline_exception_summary(args, e)
         traceback.print_exc()
         sys.exit(1)
     except ValueError as e:
         print(f'\n[ERROR] Configuration error: {e}')
+        write_pipeline_exception_summary(args, e)
         traceback.print_exc()
         sys.exit(1)
     except Exception as e:
         print(f'\n[ERROR] Unexpected error: {e}')
+        write_pipeline_exception_summary(args, e)
         traceback.print_exc()
         sys.exit(1)
 

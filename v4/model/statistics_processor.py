@@ -169,7 +169,7 @@ class StatisticsProcessor:
                                 chunk_number=None, skip_avg=False,
                                 save_dir=None):
         '''Run complete regional statistics workflow'''
-        print('\n=== Regional Statistics Processing ===')
+        print('\n  === Regional Statistics Processing ===')
 
         # Load/validate datasets, create regional masks, and initialize arrays
         self._load_and_validate_datasets()
@@ -201,7 +201,7 @@ class StatisticsProcessor:
     def run_global_statistics(self, info_dir=None, using_chunks=False,
                               chunk_number=None, skip_avg=False):
         '''Run complete global statistics workflow'''
-        print('\n=== Global Statistics Processing ===')
+        print('\n  === Global Statistics Processing ===')
 
         # Load/validate datasets and initialize statistics arrays
         self._load_and_validate_datasets()
@@ -1059,9 +1059,9 @@ class StatisticsProcessor:
 
     def _write_scorecard_files(self):
         '''Write scorecard files - one per init_date'''
-        print('\n==================================================')
-        print('WRITING SCORECARD FILES')
-        print('==================================================')
+        print('\n  ==================================================')
+        print('  WRITING SCORECARD FILES')
+        print('  ==================================================')
 
         # Get config values
         model      = self.config.get('fcst_model', '')
@@ -1214,9 +1214,13 @@ class StatisticsProcessor:
     def merge_statistics_files(cls, stats_type: str, info_dir: str,
                                chunk_specs=None) -> bool:
         '''Merge chunked stats files and calculate averages over init_dates'''
-        print('\n==================================================')
-        print('MERGING STATISTICS FILES')
-        print('==================================================')
+        stats_label = {
+            'reg': 'REGIONAL',
+            'glo': 'GLOBAL',
+        }.get(stats_type, str(stats_type).upper())
+        print('\n  ==================================================')
+        print(f'  MERGING {stats_label} STATISTICS FILES')
+        print('  ==================================================')
 
         # Establish filename pattern, look for chunks, and report
         if chunk_specs is None:
