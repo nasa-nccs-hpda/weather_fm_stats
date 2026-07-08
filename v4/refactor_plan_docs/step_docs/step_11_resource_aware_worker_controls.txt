@@ -1,7 +1,7 @@
 Step 11: Extend Resource-Aware Worker Controls
 
 Status
-- Planned.
+- In progress.
 
 Reason For This Step
 - The pipeline now uses chunk-level parallelism in the dataset and statistics
@@ -48,7 +48,13 @@ Planned Acceptance Criteria
 - The resolved worker settings are visible in the normal summary output.
 
 Actual Implementation
-- Pending.
+- Added a shared worker-limit helper in `model/worker_controls.py`.
+- Dataset and statistics worker resolution now clamp to the SLURM CPU
+  allocation when `SLURM_CPUS_PER_TASK` is available.
+- Chunking-plan logs now show the effective worker count alongside the
+  configured worker count and SLURM CPU cap.
+- Final summary output now includes the SLURM CPU cap for statistics branches
+  when available.
 
 Validation Notes
 - Pending. Re-run the smaller HPC test cases after any worker-limit change.

@@ -14,6 +14,7 @@ from model.chunk_plan import (
     write_chunk_plan,
 )
 from model.dataset_processor import BatchDatasetProcessor
+from model.worker_controls import resolve_worker_limits
 
 
 def _is_verbose_logging(log_level):
@@ -44,16 +45,7 @@ def _run_with_chunk_output_capture(log_level, chunk_label, operation):
 
 def _resolve_dataset_workers(runtime_settings, num_chunks,
                              dataset_type=None):
-    '''Resolve worker count using runtime settings and SLURM CPU context.'''
-    slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK')
-    if slurm_cpus:
-        try:
-            default_workers = max(1, int(slurm_cpus))
-        except ValueError:
-            default_workers = os.cpu_count() or 1
-    else:
-        default_workers = os.cpu_count() or 1
-
+    '''Resolve dataset worker limits using runtime settings and SLURM.'''
     configured_workers = runtime_settings.pipeline_max_workers_dataset
     if dataset_type == 'fcst':
         configured_workers = runtime_settings.pipeline_max_workers_dataset_fcst
@@ -61,9 +53,7 @@ def _resolve_dataset_workers(runtime_settings, num_chunks,
         configured_workers = runtime_settings.pipeline_max_workers_dataset_ana
     elif dataset_type == 'clim':
         configured_workers = runtime_settings.pipeline_max_workers_dataset_clim
-    max_workers = configured_workers if configured_workers else default_workers
-    max_workers = max(1, min(max_workers, num_chunks))
-    return max_workers
+    return resolve_worker_limits(configured_workers, num_chunks)
 
 
 def _cpu_total_seconds():
@@ -618,13 +608,16 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
             'timings': timings,
         }
 
-    max_workers = _resolve_dataset_workers(runtime_settings,
-                                           len(required_chunks),
-                                           dataset_type=dataset_type)
+    worker_limits = _resolve_dataset_workers(runtime_settings,
+                                             len(required_chunks),
+                                             dataset_type=dataset_type)
+    max_workers = worker_limits['effective_workers']
     print(f'[INFO] {dataset_type.upper()} chunking plan: '
           f'{len(chunk_specs)} chunk(s), {len(required_chunks)} required, '
           f'{len(skipped_chunks)} skipped, chunk_size={chunk_size}, '
-          f'max_workers={max_workers}')
+          f'max_workers={max_workers} '
+          f'configured_workers={worker_limits["configured_workers"]} '
+          f'slurm_cpu_cap={worker_limits["slurm_cpu_cap"]}')
 
     chunk_start = _start_timing()
     new_results, chunk_failures = _run_required_chunks(
@@ -637,6 +630,8 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
             'single_fcst_mode': single_fcst_mode,
             'log_level': runtime_settings.pipeline_log_level,
             'max_workers': max_workers,
+            'configured_max_workers': worker_limits['configured_workers'],
+            'slurm_cpu_cap': worker_limits['slurm_cpu_cap'],
         },
         dataset_type,
     )
@@ -760,15 +755,18 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                 'timings': timings,
             }
 
-        max_workers = _resolve_dataset_workers(runtime_settings,
-                                               len(required_chunks),
-                                               dataset_type='fcst')
+        worker_limits = _resolve_dataset_workers(runtime_settings,
+                                                  len(required_chunks),
+                                                  dataset_type='fcst')
+        max_workers = worker_limits['effective_workers']
 
         print(f'[INFO] Forecast chunking plan: {len(chunk_specs)} chunk(s), '
               f'{len(required_chunks)} required, '
               f'{len(skipped_chunks)} skipped, '
               f'chunk_size={runtime_settings.pipeline_chunk_size_fcst}, '
-              f'max_workers={max_workers}')
+              f'max_workers={max_workers} '
+              f'configured_workers={worker_limits["configured_workers"]} '
+              f'slurm_cpu_cap={worker_limits["slurm_cpu_cap"]}')
 
         chunk_start = _start_timing()
         new_results, chunk_failures = _run_required_chunks(
@@ -780,6 +778,8 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                 'single_fcst_mode': single_fcst_mode,
                 'log_level': runtime_settings.pipeline_log_level,
                 'max_workers': max_workers,
+                'configured_max_workers': worker_limits['configured_workers'],
+                'slurm_cpu_cap': worker_limits['slurm_cpu_cap'],
             },
             'fcst',
         )

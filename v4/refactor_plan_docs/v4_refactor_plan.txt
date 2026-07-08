@@ -66,6 +66,8 @@
 
 11. Extend resource-aware worker controls (Estimated LOC: 60-140)
   - Apply SLURM_CPUS_PER_TASK and configured limits consistently to dataset, statistics, and branch workers.
+  - Clamp effective worker counts to the SLURM CPU allocation and required chunk count.
+  - Surface the resolved worker cap in logs and summaries so clamping is visible during HPC runs.
   - Cap workers conservatively to avoid memory blowups.
   - Keep defaults safe for Discover node sizes.
 

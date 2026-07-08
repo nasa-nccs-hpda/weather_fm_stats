@@ -13,6 +13,7 @@ import xarray as xr
 
 from model.chunk_plan import InitDateChunkPlanner, write_chunk_plan
 from model.statistics_processor import StatisticsProcessor
+from model.worker_controls import resolve_worker_limits
 
 
 def _is_verbose_logging(log_level):
@@ -80,26 +81,22 @@ def _sum_worker_cpu_seconds(chunk_results):
 
 
 def _resolve_stats_workers(runtime_settings, num_chunks, stats_kind=None):
-    '''Resolve stats worker count conservatively for memory-heavy work.'''
-    slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK')
-    if slurm_cpus:
-        try:
-            default_workers = max(1, int(slurm_cpus))
-        except ValueError:
-            default_workers = os.cpu_count() or 1
-    else:
-        default_workers = os.cpu_count() or 1
-
+    '''Resolve stats worker limits conservatively for memory-heavy work.'''
     configured_workers = runtime_settings.pipeline_max_workers_stats
     if stats_kind == 'regional':
         configured_workers = runtime_settings.pipeline_max_workers_stats_regional
     elif stats_kind == 'global':
         configured_workers = runtime_settings.pipeline_max_workers_stats_global
-    if configured_workers:
-        max_workers = configured_workers
-    else:
-        max_workers = min(default_workers, 4)
-    return max(1, min(max_workers, num_chunks))
+    worker_limits = resolve_worker_limits(configured_workers, num_chunks)
+    if configured_workers is None:
+        fallback_workers = min(worker_limits['fallback_workers'], 4)
+        worker_limits['requested_workers'] = fallback_workers
+        worker_limits['effective_workers'] = max(
+            1, min(fallback_workers, worker_limits['chunk_cap'],
+                   worker_limits['slurm_cpu_cap']
+                   if worker_limits['slurm_cpu_cap'] is not None
+                   else fallback_workers))
+    return worker_limits
 
 
 def _parse_chunk_dates(chunk_spec):
@@ -278,6 +275,9 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
                 'failed_chunk_count': 0,
                 'max_workers': 0,
                 'configured_max_workers': configured_max_workers,
+                'slurm_cpu_cap': resolve_worker_limits(
+                    configured_max_workers, len(init_dates)
+                )['slurm_cpu_cap'],
                 'chunk_size': runtime_settings.pipeline_chunk_size_stats,
                 'max_memory_mb': get_current_memory_mb(),
                 'output_path': expected_output_path,
@@ -313,6 +313,8 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
     ]
 
     if not required_chunks:
+        worker_limits = _resolve_stats_workers(
+            runtime_settings, len(required_chunks), stats_kind=stats_kind)
         return {
             'status': 'FAILURE',
             'error': 'No statistics init_dates available after exclusions',
@@ -327,19 +329,23 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
             'failed_chunk_count': 0,
             'max_workers': 0,
             'configured_max_workers': configured_max_workers,
+            'slurm_cpu_cap': worker_limits['slurm_cpu_cap'],
             'chunk_size': runtime_settings.pipeline_chunk_size_stats,
             'max_memory_mb': get_current_memory_mb(),
             'output_path': expected_output_path,
         }
 
-    max_workers = _resolve_stats_workers(runtime_settings,
-                                         len(required_chunks),
-                                         stats_kind=stats_kind)
+    worker_limits = _resolve_stats_workers(runtime_settings,
+                                           len(required_chunks),
+                                           stats_kind=stats_kind)
+    max_workers = worker_limits['effective_workers']
     print(f'[INFO] {stats_kind} stats chunking plan: '
           f'{len(chunk_specs)} chunk(s), {len(required_chunks)} required, '
           f'{len(skipped_chunks)} skipped, '
           f'chunk_size={runtime_settings.pipeline_chunk_size_stats}, '
-          f'max_workers={max_workers}')
+          f'max_workers={max_workers} '
+          f'configured_workers={worker_limits["configured_workers"]} '
+          f'slurm_cpu_cap={worker_limits["slurm_cpu_cap"]}')
     _remove_stale_stats_chunks(required_chunks)
 
     chunk_failures = []
@@ -473,6 +479,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
             'failed_chunk_count': failed_chunk_count,
             'max_workers': max_workers,
             'configured_max_workers': configured_max_workers,
+            'slurm_cpu_cap': worker_limits['slurm_cpu_cap'],
             'chunk_size': runtime_settings.pipeline_chunk_size_stats,
             'max_memory_mb': branch_max_memory,
             'worker_cpu_seconds': worker_cpu_seconds,
@@ -494,6 +501,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
             'failed_chunk_count': failed_chunk_count,
             'max_workers': max_workers,
             'configured_max_workers': configured_max_workers,
+            'slurm_cpu_cap': worker_limits['slurm_cpu_cap'],
             'chunk_size': runtime_settings.pipeline_chunk_size_stats,
             'max_memory_mb': branch_max_memory,
             'worker_cpu_seconds': worker_cpu_seconds,
@@ -513,6 +521,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
         'failed_chunk_count': failed_chunk_count,
         'max_workers': max_workers,
         'configured_max_workers': configured_max_workers,
+        'slurm_cpu_cap': worker_limits['slurm_cpu_cap'],
         'chunk_size': runtime_settings.pipeline_chunk_size_stats,
         'max_memory_mb': branch_max_memory,
         'worker_cpu_seconds': worker_cpu_seconds,

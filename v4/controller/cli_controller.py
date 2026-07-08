@@ -16,6 +16,7 @@ from model.statistics_parallel_executor import (
     run_parallel_statistics_branch,
 )
 from model.statistics_processor import StatisticsProcessor
+from model.worker_controls import get_slurm_cpu_cap
 
 
 PIPELINE_RUN_CONTEXT = {}
@@ -435,6 +436,7 @@ def print_runtime_contract(runtime_settings):
     print(f'  max_workers_stats={runtime_settings.pipeline_max_workers_stats}')
     print(f'  max_workers_stats_regional={runtime_settings.pipeline_max_workers_stats_regional}')
     print(f'  max_workers_stats_global={runtime_settings.pipeline_max_workers_stats_global}')
+    print(f'  slurm_cpu_cap={get_slurm_cpu_cap()}')
     print(f'  chunk_size_stats={runtime_settings.pipeline_chunk_size_stats}')
 
 
@@ -600,7 +602,8 @@ def _print_resource_summary(phase_metrics, dataset_timings, branch_results,
                   f'{_fmt_value(result.get("worker_cpu_percent_of_allocation"))} '
                   f'max_workers={_fmt_value(result.get("max_workers"))} '
                   f'configured_workers='
-                  f'{_fmt_value(result.get("configured_max_workers"))}')
+                  f'{_fmt_value(result.get("configured_max_workers"))} '
+                  f'slurm_cpu_cap={_fmt_value(result.get("slurm_cpu_cap"))}')
 
 
 def _print_timing_summary(phase_metrics, dataset_timings, branch_results,
@@ -742,6 +745,9 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
             if 'configured_max_workers' in branch_result:
                 f.write(f'{branch_name}_configured_max_workers: '
                         f'{branch_result["configured_max_workers"]}\n')
+            if branch_result.get('slurm_cpu_cap') is not None:
+                f.write(f'{branch_name}_slurm_cpu_cap: '
+                        f'{branch_result["slurm_cpu_cap"]}\n')
             if branch_result.get('max_memory_mb') is not None:
                 f.write(f'{branch_name}_max_memory_mb: '
                         f'{branch_result["max_memory_mb"]}\n')
@@ -838,7 +844,8 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
                         f'{result.get("worker_cpu_percent_of_allocation")} '
                         f'max_workers={result.get("max_workers")} '
                         f'configured_workers='
-                        f'{result.get("configured_max_workers")}\n')
+                        f'{result.get("configured_max_workers")} '
+                        f'slurm_cpu_cap={result.get("slurm_cpu_cap")}\n')
         f.write('\n' + '=' * 80 + '\n')
         f.write('TIMING\n')
         f.write('=' * 80 + '\n')
