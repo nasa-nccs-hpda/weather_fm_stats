@@ -44,7 +44,16 @@ extract_job_ids() {
 
 jobs_running() {
     local job_list="$1"
-    squeue -h -j "$job_list" | grep -q .
+    local -a job_ids
+    local job_id
+
+    IFS=',' read -r -a job_ids <<< "$job_list"
+    for job_id in "${job_ids[@]}"; do
+        if squeue -h -j "$job_id" 2>/dev/null | grep -q .; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 wait_for_experiment_jobs() {
