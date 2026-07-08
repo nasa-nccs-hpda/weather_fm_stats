@@ -604,8 +604,9 @@ def _print_resource_summary(phase_metrics, dataset_timings, branch_results,
 
 
 def _print_timing_summary(phase_metrics, dataset_timings, branch_results,
-                          pipeline_wall_seconds):
+                          pipeline_wall_seconds, dataset_statuses=None):
     '''Print hierarchical timing summary.'''
+    dataset_statuses = dataset_statuses or {}
     _summary_separator('TIMING')
     print(f'  overall python pipeline: {_fmt_seconds(pipeline_wall_seconds)}')
     print('  phases:')
@@ -615,7 +616,10 @@ def _print_timing_summary(phase_metrics, dataset_timings, branch_results,
     if dataset_timings:
         print('  dataset sub-steps:')
         for group_name, timings in _dataset_timing_groups(dataset_timings):
-            print(f'    {group_name}:')
+            if group_name in dataset_statuses:
+                print(f'    {group_name}: status={dataset_statuses[group_name]}')
+            else:
+                print(f'    {group_name}:')
             for timing in timings:
                 print(f'      {timing["name"]}: '
                       f'wall={_fmt_seconds(timing["wall_seconds"])}')
@@ -847,7 +851,11 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
         if dataset_timings:
             f.write('dataset sub-steps:\n')
             for group_name, timings in _dataset_timing_groups(dataset_timings):
-                f.write(f'  {group_name}:\n')
+                if group_name in dataset_statuses:
+                    f.write(f'  {group_name}: '
+                            f'status={dataset_statuses[group_name]}\n')
+                else:
+                    f.write(f'  {group_name}:\n')
                 for timing in timings:
                     f.write(f'    {timing["name"]}: '
                             f'wall={timing["wall_seconds"]}s\n')
@@ -874,7 +882,7 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
     _print_resource_summary(phase_metrics, dataset_timings, branch_results,
                             pipeline_max_memory)
     _print_timing_summary(phase_metrics, dataset_timings, branch_results,
-                          pipeline_wall_seconds)
+                          pipeline_wall_seconds, dataset_statuses)
 
 
 def write_pipeline_exception_summary(args, exc):

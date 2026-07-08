@@ -102,6 +102,8 @@ Implementation Notes
 - Grouped dataset sub-step resource/timing lines under fcst, ana, clim, and
   source headings; statistics branch resource/timing lines are reported under
   regional/global branch headings.
+- Added source dataset status labels to the dataset timing section so reused
+  fcst/ana/clim outputs are visible where the elapsed times are reported.
 - Added a best-effort pipeline exception summary path. If an uncaught exception
   occurs after runtime settings are available, the top-level handler writes a
   FAILURE run_summary.txt with collected phase metrics, dataset timings,
