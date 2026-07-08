@@ -1,0 +1,71 @@
+Step 10: Logging Output Consolidation
+
+Status
+- Planned.
+
+Reference Log
+- Use v4/logs/stats_v4_pipeline_direct_20260708_085841.out as a reference for
+  current default output.
+
+Reason For This Step
+- Current chunk workers print generic BatchDatasetProcessor and statistics
+  output that looks like full standalone processing rather than chunk work.
+- Normal successful runs repeat the same setup and validation details many
+  times, making it harder to find actual progress, warnings, failures, reuse
+  decisions, and bottlenecks.
+- The pipeline now runs major sections serially, so default output should be
+  organized around those sections instead of repeated internal processor
+  banners.
+
+Primary Goals
+- Add a pipeline logging/verbosity mode so default output suppresses normal
+  validation and setup details, while verbose/debug output keeps diagnostics.
+- Organize default logs into concise serial sections:
+  forecast, analysis, climatology, regional statistics, global statistics, and
+  final summary.
+- Consolidate repeated normal-case messages within each section, especially:
+  YAML initialization, BatchDatasetProcessor initialization, target grid
+  creation, existing-dataset checks, validation checks, and batch processing
+  headers.
+- Make every worker/chunk message explicitly identify itself as chunk output.
+- Keep default chunk output to at most five concise lines per chunk.
+- Keep actionable warnings, errors, worker progress, timing, outputs, reuse
+  status, and bottlenecks visible in default logs.
+
+Chunk Logging Contract
+- Dataset chunks and statistics chunks should not print generic full-run banners
+  such as "Multi-Variable Batch Forecast Processing" without a chunk label.
+- A default chunk log should include only the essential lifecycle information:
+  chunk id, dataset/stat branch, selected date/time range or count, start or
+  submission status, completion/failure status, elapsed time, and memory if
+  available.
+- Detailed per-variable, per-file, target-grid, validation, and collection
+  output should move behind verbose/debug logging.
+- Parent process logs should summarize chunk plans and completions; child
+  process logs should be concise and chunk-labeled.
+
+Out Of Scope For This Step
+- Do not change scientific calculations.
+- Do not change chunk planning, merge behavior, resume behavior, or worker
+  counts.
+- Do not introduce regional/global branch concurrency.
+- Do not rewrite every print statement if the highest-noise paths can be
+  controlled more safely.
+
+Likely Files To Inspect Or Touch
+- model/dataset_processor.py
+- model/dataset_parallel_executor.py
+- model/statistics_processor.py
+- model/statistics_parallel_executor.py
+- model/config_model.py
+- controller/cli_controller.py
+- example_yaml_files/*.yaml, only if adding a logging setting with examples.
+
+Acceptance Criteria
+- A normal successful pipeline run is readable by section and does not repeat
+  full setup/validation details for each chunk.
+- Chunk output is explicitly labeled as chunk output.
+- Default chunk output is no more than five lines per chunk.
+- Existing warnings and errors remain visible.
+- Verbose/debug mode can still expose detailed validation, file, variable,
+  dimension, and target-grid information when needed.

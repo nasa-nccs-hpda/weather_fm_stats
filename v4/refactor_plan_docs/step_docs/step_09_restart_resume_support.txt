@@ -1,8 +1,8 @@
 Step 9: Restart And Resume Support
 
 Status
-- Implemented for final-output safe resume; deeper chunk-level checkpointing is
-  deferred.
+- Implemented and tested on the HPC setup for final-output safe resume; deeper
+  chunk-level checkpointing is deferred.
 
 Reason For This Step
 - Several expensive stages already write deterministic final outputs.
@@ -52,6 +52,8 @@ Validation Notes
   v4\controller\cli_controller.py v4\model\config_model.py
 - Did not run stats_v4.py or v4 run scripts locally; those are intended for the
   HPC environment.
+- HPC testing confirmed that regional statistics can be reported as REUSED when
+  a valid final regional statistics output already exists in safe resume mode.
 
 Recommended HPC Tests
 - Run a completed config again with pipeline_resume_mode=safe and confirm source

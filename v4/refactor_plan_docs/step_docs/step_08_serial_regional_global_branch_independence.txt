@@ -1,8 +1,8 @@
 Step 8: Strengthen Serial Regional And Global Branch Independence
 
 Status
-- Implemented in code; branch behavior validated on HPC. Statistics tuning is
-  ongoing as follow-up testing.
+- Implemented and tested on the HPC setup. Statistics tuning is ongoing as
+  follow-up testing.
 
 Reason For This Step
 - Regional and global statistics already represent separate logical pipeline
@@ -111,6 +111,9 @@ Validation Notes
 - A successful full-pipeline run confirmed that regional/global branch execution
   is serial: stage_3_statistics_branches wall time was approximately regional
   wall time plus global wall time.
+- The same HPC run confirmed that the Step 8 branch summaries reported separate
+  regional/global status, chunk counts, worker counts, wall times, output paths,
+  and output existence correctly.
 - The same run used chunk_size_stats=8 with regional/global workers=4, producing
   4 regional chunks and 4 global chunks. Regional completed in about 237 seconds;
   global completed in about 939 seconds.
