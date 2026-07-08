@@ -1,7 +1,7 @@
 Step 10: Logging Output Consolidation
 
 Status
-- In progress.
+- Complete.
 
 Reference Log
 - Use v4/logs/stats_v4_pipeline_direct_20260708_085841.out as a reference for
@@ -108,6 +108,21 @@ Implementation Notes
   occurs after runtime settings are available, the top-level handler writes a
   FAILURE run_summary.txt with collected phase metrics, dataset timings,
   branch results, and a _pipeline_exception record.
+- Fixed a climatology chunk concat bug found during shorter-example HPC
+  testing. Climatology entries now all receive their time coordinate before
+  xr.concat runs, avoiding mixed-coordinate failures such as "coordinate
+  'time' not present in all datasets."
+
+Test Notes
+- Tested on the HPC workflow after the logging consolidation changes.
+- Normal verbosity now hides the resolved pipeline runtime contract while
+  preserving it for verbose/debug runs.
+- Dataset timing summaries now show fcst/ana/clim status labels next to their
+  timing groups, including REUSED when final source datasets are reused.
+- Worker CPU fields are now visible for chunk completions and are reflected in
+  chunk-execution resource summaries.
+- The shorter example YAML run exposed the climatology concat ordering bug,
+  which was fixed as part of this step.
 
 Remaining Work
 - Further consolidate parent-process normal output into forecast, analysis,
@@ -115,4 +130,5 @@ Remaining Work
   sections.
 - Decide whether resource START/END lines should remain in default output or
   move to verbose with only the final resource summary shown by default.
-- Improve child-process CPU/RAM accounting beyond parent-process metrics.
+- Future logging cleanup can further reduce parent-process normal output, but
+  the step 10 logging contract is complete enough to merge.
