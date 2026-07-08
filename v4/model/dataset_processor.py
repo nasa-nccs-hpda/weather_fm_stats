@@ -2101,13 +2101,13 @@ class BatchDatasetProcessor:
             # Combine climatology
             for i, ds in enumerate(clim_list):
                 clim_list[i] = ds.assign_coords(time=[times[i]])
-                combined_clim = xr.concat(
-                    clim_list,
-                    dim='time',
-                    data_vars='all',
-                    coords='different',
-                    compat='equals',
-                )
+            combined_clim = xr.concat(
+                clim_list,
+                dim='time',
+                data_vars='all',
+                coords='different',
+                compat='equals',
+            )
             combined_clim = self._clean_and_filter_dataset(
                 combined_clim, ['time', 'lev', 'lat', 'lon'], 'clim',
                 val_results, skip_calc_mode)
