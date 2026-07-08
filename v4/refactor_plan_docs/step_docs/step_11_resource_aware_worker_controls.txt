@@ -1,7 +1,7 @@
 Step 11: Extend Resource-Aware Worker Controls
 
 Status
-- In progress.
+- Complete.
 
 Reason For This Step
 - The pipeline now uses chunk-level parallelism in the dataset and statistics
@@ -59,7 +59,14 @@ Actual Implementation
   passed into chunk workers.
 
 Validation Notes
-- Pending. Re-run the smaller HPC test cases after any worker-limit change.
+- Validated with v4/logs/stats_v4_pipeline_direct.20260708_155940.out.
+- The short HPC run completed successfully.
+- Dataset chunking plans reported effective max_workers, configured_workers,
+  and slurm_cpu_cap for fcst, ana, and clim.
+- Regional and global statistics chunking plans reported effective max_workers,
+  configured_workers, and slurm_cpu_cap.
+- Effective worker counts were clamped by required chunk count where fewer
+  chunks existed than configured workers.
 
 Known Limits After This Step
 - Worker tuning may still need follow-up testing for the shortest and longest
