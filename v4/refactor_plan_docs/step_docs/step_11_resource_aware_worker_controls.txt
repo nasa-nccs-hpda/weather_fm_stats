@@ -1,0 +1,58 @@
+Step 11: Extend Resource-Aware Worker Controls
+
+Status
+- Planned.
+
+Reason For This Step
+- The pipeline now uses chunk-level parallelism in the dataset and statistics
+  stages, but worker counts still need to be kept predictable on SLURM jobs.
+- Discover runs can look CPU-rich while still being memory-sensitive, so worker
+  caps need to stay conservative.
+- Dataset and statistics branches already have separate execution paths, so
+  worker control should stay explicit per branch instead of relying on one
+  generic cap.
+
+Planned Work
+- Apply `SLURM_CPUS_PER_TASK` and configured limits consistently to dataset,
+  statistics, and branch workers.
+- Keep separate worker limits for forecast, analysis, climatology, regional,
+  and global work where that makes the runtime safer and easier to tune.
+- Cap worker counts by both configured limits and the number of required
+  chunks.
+- Keep defaults conservative enough for Discover node sizes and memory-heavy
+  workloads.
+- Make the resolved worker settings easy to inspect in the runtime contract
+  and final run summary.
+- Keep the current serial regional/global execution model unchanged.
+
+Out Of Scope For This Step
+- Do not change scientific calculations.
+- Do not add branch-level concurrency above the current statistics branch
+  execution model.
+- Do not redesign chunk planning.
+- Do not add new restart/resume behavior.
+- Do not broaden the logging cleanup from Step 10 beyond worker-limit output.
+
+Planned Files To Inspect Or Touch
+- model/dataset_parallel_executor.py
+- model/statistics_parallel_executor.py
+- model/config_model.py
+- controller/cli_controller.py
+- refactor_plan_docs/v4_refactor_plan.txt
+
+Planned Acceptance Criteria
+- Worker caps are resolved consistently across dataset and statistics paths.
+- Effective worker counts never exceed the configured limit or required chunk
+  count.
+- Default settings remain safe for current Discover SLURM allocations.
+- The resolved worker settings are visible in the normal summary output.
+
+Actual Implementation
+- Pending.
+
+Validation Notes
+- Pending. Re-run the smaller HPC test cases after any worker-limit change.
+
+Known Limits After This Step
+- Worker tuning may still need follow-up testing for the shortest and longest
+  date ranges.
