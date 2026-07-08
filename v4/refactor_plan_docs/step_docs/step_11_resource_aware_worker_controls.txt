@@ -55,6 +55,8 @@ Actual Implementation
   configured worker count and SLURM CPU cap.
 - Final summary output now includes the SLURM CPU cap for statistics branches
   when available.
+- Worker-limit metadata is kept in the parent process summaries and is not
+  passed into chunk workers.
 
 Validation Notes
 - Pending. Re-run the smaller HPC test cases after any worker-limit change.
