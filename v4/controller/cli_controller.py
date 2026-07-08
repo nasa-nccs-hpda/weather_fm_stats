@@ -611,30 +611,44 @@ def _print_timing_summary(phase_metrics, dataset_timings, branch_results,
                   f'status={result["status"]}')
 
 
-def _print_output_summary(branch_results):
+def _print_output_summary(branch_results, dataset_statuses=None,
+                          dataset_files=None):
     '''Print branch/output status summary.'''
+    dataset_statuses = dataset_statuses or {}
+    dataset_files = dataset_files or {}
     _summary_separator('OUTPUTS AND STATUS')
+    if dataset_statuses:
+        print('  source datasets:')
+        for dataset_type in ['fcst', 'ana', 'clim']:
+            if dataset_type in dataset_statuses:
+                print(f'    {dataset_type}: {dataset_statuses[dataset_type]}')
+                if dataset_files.get(dataset_type):
+                    print(f'      output={dataset_files[dataset_type]}')
+    if branch_results:
+        print('  statistics branches:')
     for branch_name, branch_result in branch_results.items():
-        print(f'  {branch_name}: {branch_result["status"]}')
+        print(f'    {branch_name}: {branch_result["status"]}')
         if branch_result.get('error'):
-            print(f'    error={branch_result["error"]}')
+            print(f'      error={branch_result["error"]}')
         if branch_result.get('reuse_reason'):
-            print(f'    reuse_reason={branch_result["reuse_reason"]}')
+            print(f'      reuse_reason={branch_result["reuse_reason"]}')
         if 'chunk_count' in branch_result:
-            print(f'    chunks={branch_result["chunk_count"]} '
+            print(f'      chunks={branch_result["chunk_count"]} '
                   f'required={branch_result["required_chunk_count"]} '
                   f'skipped={branch_result["skipped_chunk_count"]} '
                   f'completed={branch_result.get("completed_chunk_count")} '
                   f'failed={branch_result.get("failed_chunk_count")}')
         if branch_result.get('output_path'):
-            print(f'    output={branch_result["output_path"]} '
+            print(f'      output={branch_result["output_path"]} '
                   f'exists={branch_result.get("output_exists")}')
 
 
 def write_pipeline_summary(info_dir, runtime_settings, branch_results,
                            final_status, phase_metrics=None,
                            dataset_timings=None,
-                           pipeline_wall_seconds=None):
+                           pipeline_wall_seconds=None,
+                           dataset_statuses=None,
+                           dataset_files=None):
     '''Write run summary file for pipeline mode.'''
     if not info_dir:
         return
@@ -645,6 +659,8 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
     pipeline_max_memory = None
     phase_metrics = phase_metrics or []
     dataset_timings = dataset_timings or []
+    dataset_statuses = dataset_statuses or {}
+    dataset_files = dataset_files or {}
     with open(summary_path, 'w', encoding='utf-8') as f:
         f.write('v4 pipeline summary\n')
         f.write(f'final_status: {final_status}\n')
@@ -658,6 +674,15 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
                 f'{runtime_settings.pipeline_resume_mode}\n')
         f.write(f'pipeline_log_level: '
                 f'{runtime_settings.pipeline_log_level}\n')
+        if dataset_statuses:
+            f.write('\nsource_dataset_statuses:\n')
+            for dataset_type in ['fcst', 'ana', 'clim']:
+                if dataset_type in dataset_statuses:
+                    f.write(f'{dataset_type}_status: '
+                            f'{dataset_statuses[dataset_type]}\n')
+                    if dataset_files.get(dataset_type):
+                        f.write(f'{dataset_type}_output_path: '
+                                f'{dataset_files[dataset_type]}\n')
         for branch_name, branch_result in branch_results.items():
             f.write(f'{branch_name}_status: {branch_result["status"]}\n')
             if branch_result.get('error'):
@@ -811,7 +836,14 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
     print(f'  pipeline_wall_seconds: {_fmt_seconds(pipeline_wall_seconds)}')
     print(f'  stats_types: {runtime_settings.stats_types}')
     print(f'  resume_mode: {runtime_settings.pipeline_resume_mode}')
-    _print_output_summary(branch_results)
+    if dataset_statuses:
+        print('  source datasets:')
+        for dataset_type in ['fcst', 'ana', 'clim']:
+            if dataset_type in dataset_statuses:
+                print(f'    {dataset_type}: {dataset_statuses[dataset_type]}')
+                if dataset_files.get(dataset_type):
+                    print(f'      output={dataset_files[dataset_type]}')
+    _print_output_summary(branch_results, dataset_statuses, dataset_files)
     _print_resource_summary(phase_metrics, dataset_timings, branch_results,
                             pipeline_max_memory)
     _print_timing_summary(phase_metrics, dataset_timings, branch_results,
@@ -847,6 +879,8 @@ def write_pipeline_exception_summary(args, exc):
             phase_metrics=context.get('phase_metrics') or [],
             dataset_timings=context.get('dataset_timings') or [],
             pipeline_wall_seconds=pipeline_wall_seconds,
+            dataset_statuses=context.get('dataset_statuses') or {},
+            dataset_files=context.get('dataset_files') or {},
         )
         return True
     except Exception as summary_exc:
@@ -870,6 +904,8 @@ def run_pipeline_mode(args, single_fcst_mode):
         'phase_metrics': phase_metrics,
         'dataset_timings': dataset_timings,
         'branch_results': branch_results,
+        'dataset_statuses': {},
+        'dataset_files': {},
         'runtime_settings': None,
     })
     print_pipeline_phase_header(1, 4, 'Preflight')
@@ -897,6 +933,8 @@ def run_pipeline_mode(args, single_fcst_mode):
     print_pipeline_phase_footer()
     dataset_timings = results.get('timings', [])
     PIPELINE_RUN_CONTEXT['dataset_timings'] = dataset_timings
+    dataset_statuses = results.get('dataset_statuses', {})
+    PIPELINE_RUN_CONTEXT['dataset_statuses'] = dataset_statuses
 
     if results.get('status') != 'success':
         reason = results.get('reason', 'Unknown error')
@@ -907,10 +945,13 @@ def run_pipeline_mode(args, single_fcst_mode):
                                'FAILURE', phase_metrics=phase_metrics,
                                dataset_timings=dataset_timings,
                                pipeline_wall_seconds=round(
-                                   time.time() - pipeline_start, 2))
+                                   time.time() - pipeline_start, 2),
+                               dataset_statuses=dataset_statuses,
+                               dataset_files=results.get('dataset_files', {}))
         return 1
 
     dataset_files = results.get('dataset_files', {})
+    PIPELINE_RUN_CONTEXT['dataset_files'] = dataset_files
     init_dates = results.get('init_dates', [])
     leads = results.get('leads', [])
 
@@ -923,7 +964,9 @@ def run_pipeline_mode(args, single_fcst_mode):
                                'FAILURE', phase_metrics=phase_metrics,
                                dataset_timings=dataset_timings,
                                pipeline_wall_seconds=round(
-                                   time.time() - pipeline_start, 2))
+                                   time.time() - pipeline_start, 2),
+                               dataset_statuses=dataset_statuses,
+                               dataset_files=dataset_files)
         return 1
     if not init_dates or not leads:
         print('[ERROR] Missing init dates or lead times for statistics')
@@ -931,9 +974,17 @@ def run_pipeline_mode(args, single_fcst_mode):
                                'FAILURE', phase_metrics=phase_metrics,
                                dataset_timings=dataset_timings,
                                pipeline_wall_seconds=round(
-                                   time.time() - pipeline_start, 2))
+                                   time.time() - pipeline_start, 2),
+                               dataset_statuses=dataset_statuses,
+                               dataset_files=dataset_files)
         return 1
-    print(f'[INFO] RESULTS FROM PHASE 2 (datasets): {dataset_files}')
+    if dataset_statuses:
+        print('[INFO] Source dataset statuses:')
+        for dataset_type in ['fcst', 'ana', 'clim']:
+            if dataset_type in dataset_statuses:
+                output_path = dataset_files.get(dataset_type, 'n/a')
+                print(f'  {dataset_type}: {dataset_statuses[dataset_type]} '
+                      f'output={output_path}')
 
     print_pipeline_phase_header(3, 4, 'Statistics branches')
     requested_branches = []
@@ -988,7 +1039,9 @@ def run_pipeline_mode(args, single_fcst_mode):
                                phase_metrics=phase_metrics,
                                dataset_timings=dataset_timings,
                                pipeline_wall_seconds=round(
-                                   time.time() - pipeline_start, 2))
+                                   time.time() - pipeline_start, 2),
+                               dataset_statuses=dataset_statuses,
+                               dataset_files=dataset_files)
         return 1
 
     success_count = sum(1 for r in branch_results.values()
@@ -1011,7 +1064,9 @@ def run_pipeline_mode(args, single_fcst_mode):
     write_pipeline_summary(args.info_dir, runtime_settings, branch_results,
                            final_status, phase_metrics=phase_metrics,
                            dataset_timings=dataset_timings,
-                           pipeline_wall_seconds=pipeline_wall_seconds)
+                           pipeline_wall_seconds=pipeline_wall_seconds,
+                           dataset_statuses=dataset_statuses,
+                           dataset_files=dataset_files)
     if final_status == 'SUCCESS':
         print('\n[SUCCESS] Pipeline completed successfully')
     elif final_status == 'PARTIAL_FAILURE':

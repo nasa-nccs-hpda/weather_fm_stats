@@ -499,6 +499,7 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
             'status': 'success',
             'dataset_files': {},
             'existing_datasets': {},
+            'dataset_statuses': {dataset_type: 'SKIPPED'},
             'chunk_results': [],
             'timings': timings,
         }
@@ -509,8 +510,8 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
                                      runtime_settings.pipeline_log_level):
         _finish_timing(timings, f'{dataset_type}_existing_dataset_check',
                        check_start)
-        print(f'[INFO] {dataset_type.upper()} dataset already valid; '
-              f'skipping {dataset_type} chunk processing')
+        print(f'[INFO] {dataset_type.upper()} dataset status: REUSED '
+              f'(valid existing output; skipping chunk processing)')
         existing_datasets_check = _run_with_chunk_output_capture(
             runtime_settings.pipeline_log_level,
             f'{dataset_type} existing-dataset lookup',
@@ -526,6 +527,7 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
             'status': 'success',
             'dataset_files': dataset_files,
             'existing_datasets': existing_datasets,
+            'dataset_statuses': {dataset_type: 'REUSED'},
             'chunk_results': [],
             'timings': timings,
         }
@@ -634,6 +636,7 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
                 base_processor._generate_output_filenm(dataset_type))
         },
         'existing_datasets': {},
+        'dataset_statuses': {dataset_type: 'SUCCESS'},
         'chunk_results': chunk_results,
         'timings': timings,
     }
@@ -656,6 +659,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
     forecast_results = {
         'existing_datasets': {},
         'datasets': {},
+        'dataset_statuses': {},
     }
     if process_fcst and _forecast_needs_processing(
             config_path, info_dir, single_fcst_mode,
@@ -772,10 +776,11 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         _finish_timing(timings, 'fcst_chunk_merge', merge_start)
         _finish_timing(timings, 'fcst_total', fcst_start)
         forecast_results['datasets']['fcst'] = True
+        forecast_results['dataset_statuses']['fcst'] = 'SUCCESS'
     elif process_fcst:
         check_start = _start_timing()
-        print('[INFO] Forecast dataset already valid; skipping forecast '
-              'chunk processing')
+        print('[INFO] Forecast dataset status: REUSED '
+              '(valid existing output; skipping chunk processing)')
         temp_processor = _run_with_chunk_output_capture(
             runtime_settings.pipeline_log_level,
             'forecast existing-dataset lookup setup',
@@ -790,8 +795,11 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         if existing_datasets_check.get('fcst'):
             forecast_results['existing_datasets']['fcst'] = (
                 existing_datasets_check['fcst'])
+            forecast_results['dataset_statuses']['fcst'] = 'REUSED'
         _finish_timing(timings, 'fcst_existing_dataset_check', check_start)
         _finish_timing(timings, 'fcst_total', fcst_start)
+    else:
+        forecast_results['dataset_statuses']['fcst'] = 'SKIPPED'
 
     ana_results = _run_time_dataset_build(
         config_path, info_dir, runtime_settings, 'ana',
@@ -822,6 +830,11 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         base_processor, forecast_results, ['fcst']))
     dataset_files.update(ana_results.get('dataset_files', {}))
     dataset_files.update(clim_results.get('dataset_files', {}))
+    dataset_statuses = {
+        **forecast_results.get('dataset_statuses', {}),
+        **ana_results.get('dataset_statuses', {}),
+        **clim_results.get('dataset_statuses', {}),
+    }
 
     final_processor = _run_with_chunk_output_capture(
         runtime_settings.pipeline_log_level,
@@ -839,9 +852,11 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         'status': 'success',
         'dataset_files': dataset_files,
         'existing_datasets': {
+            **forecast_results.get('existing_datasets', {}),
             **ana_results.get('existing_datasets', {}),
             **clim_results.get('existing_datasets', {}),
         },
+        'dataset_statuses': dataset_statuses,
         'init_dates': init_dates,
         'leads': leads,
         'chunk_results': chunk_results,
