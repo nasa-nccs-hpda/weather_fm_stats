@@ -35,6 +35,7 @@ class RuntimeSettings:
     pipeline_branch_execution: str
     pipeline_resume_mode: str
     pipeline_summary_file: str
+    pipeline_log_level: str
     pipeline_max_workers_dataset: int
     pipeline_max_workers_dataset_fcst: int
     pipeline_max_workers_dataset_ana: int
@@ -83,6 +84,11 @@ def resolve_runtime_settings(args, config):
         getattr(args, 'pipeline_summary_file', None),
         config.get('pipeline_summary_file'),
         'run_summary.txt',
+    )
+    pipeline_log_level = _resolve_setting(
+        getattr(args, 'pipeline_log_level', None),
+        config.get('pipeline_log_level'),
+        'normal',
     )
     pipeline_max_workers_dataset = _resolve_setting(
         getattr(args, 'pipeline_max_workers_dataset', None),
@@ -144,6 +150,7 @@ def resolve_runtime_settings(args, config):
     valid_fail_policy = {'fail_fast', 'partial_ok'}
     valid_branch_execution = {'sequential'}
     valid_resume_mode = {'off', 'safe'}
+    valid_log_level = {'normal', 'verbose', 'debug'}
 
     if stats_types not in valid_stats_types:
         raise ValueError(
@@ -164,6 +171,11 @@ def resolve_runtime_settings(args, config):
         raise ValueError(
             f'Invalid pipeline_resume_mode: {pipeline_resume_mode}. '
             f'Expected one of: {sorted(valid_resume_mode)}'
+        )
+    if pipeline_log_level not in valid_log_level:
+        raise ValueError(
+            f'Invalid pipeline_log_level: {pipeline_log_level}. '
+            f'Expected one of: {sorted(valid_log_level)}'
         )
     if not pipeline_summary_file or not str(pipeline_summary_file).strip():
         raise ValueError('pipeline_summary_file cannot be empty')
@@ -263,6 +275,7 @@ def resolve_runtime_settings(args, config):
         pipeline_branch_execution=pipeline_branch_execution,
         pipeline_resume_mode=pipeline_resume_mode,
         pipeline_summary_file=pipeline_summary_file,
+        pipeline_log_level=pipeline_log_level,
         pipeline_max_workers_dataset=pipeline_max_workers_dataset,
         pipeline_max_workers_dataset_fcst=pipeline_max_workers_dataset_fcst,
         pipeline_max_workers_dataset_ana=pipeline_max_workers_dataset_ana,

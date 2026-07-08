@@ -1,5 +1,7 @@
 '''Dataset parallel execution helpers for v4 pipeline mode.'''
 
+import contextlib
+import io
 import os
 import time
 import traceback
@@ -12,6 +14,32 @@ from model.chunk_plan import (
     write_chunk_plan,
 )
 from model.dataset_processor import BatchDatasetProcessor
+
+
+def _is_verbose_logging(log_level):
+    '''Return True when detailed worker output should pass through.'''
+    return str(log_level or 'normal').lower() in {'verbose', 'debug'}
+
+
+def _run_with_chunk_output_capture(log_level, chunk_label, operation):
+    '''Run a chunk operation while suppressing noisy internals by default.'''
+    if _is_verbose_logging(log_level):
+        return operation()
+
+    buffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buffer):
+            return operation()
+    except Exception:
+        captured_lines = [
+            line for line in buffer.getvalue().splitlines()
+            if line.strip()
+        ]
+        if captured_lines:
+            print(f'[ERROR] {chunk_label} captured output before failure:')
+            for line in captured_lines[-20:]:
+                print(f'  {line}')
+        raise
 
 
 def _resolve_dataset_workers(runtime_settings, num_chunks,
@@ -139,57 +167,63 @@ def _log_chunk_failed(dataset_type, chunk_spec, completed_count,
 
 
 def _run_fcst_chunk_worker(config_path, info_dir, chunk_spec,
-                           single_fcst_mode):
+                           single_fcst_mode, log_level='normal'):
     '''Worker entrypoint for one forecast chunk.'''
-    processor = BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode)
-    processor.ana_model = ''
-    processor.clim_model = ''
+    chunk_label = f'forecast dataset chunk {chunk_spec.chunk_id}'
 
-    results = processor.process_batch(
-        target_coll=None,
-        info_dir=info_dir,
-        date_start_idx=chunk_spec.start_idx,
-        date_end_idx=chunk_spec.end_idx,
-        check_only=False,
-        skip_calc_mode=False,
-        single_fcst_mode=single_fcst_mode,
-    )
+    def _run():
+        processor = BatchDatasetProcessor.from_yaml(
+            config_path, single_fcst_mode)
+        processor.ana_model = ''
+        processor.clim_model = ''
 
-    if results.get('status') != 'success':
-        reason = results.get('reason', 'unknown')
-        raise RuntimeError(
-            f'Forecast chunk {chunk_spec.chunk_id} failed: {reason}')
+        results = processor.process_batch(
+            target_coll=None,
+            info_dir=info_dir,
+            date_start_idx=chunk_spec.start_idx,
+            date_end_idx=chunk_spec.end_idx,
+            check_only=False,
+            skip_calc_mode=False,
+            single_fcst_mode=single_fcst_mode,
+        )
 
-    if results.get('reason') == 'no_dates_in_chunk':
+        if results.get('status') != 'success':
+            reason = results.get('reason', 'unknown')
+            raise RuntimeError(
+                f'Forecast chunk {chunk_spec.chunk_id} failed: {reason}')
+
+        if results.get('reason') == 'no_dates_in_chunk':
+            return {
+                'status': 'skipped',
+                'chunk_index': chunk_spec.chunk_index,
+                'chunk_id': chunk_spec.chunk_id,
+                'start_idx': chunk_spec.start_idx,
+                'end_idx': chunk_spec.end_idx,
+                'output_path': chunk_spec.output_path,
+                'processed_dates': 0,
+            }
+
+        processor.save_processed_datasets(
+            results,
+            info_dir=info_dir,
+            date_start_idx=chunk_spec.start_idx,
+            date_end_idx=chunk_spec.end_idx,
+            target_coll=None,
+            single_fcst_mode=bool(single_fcst_mode),
+            skip_calc_mode=False,
+        )
+
         return {
-            'status': 'skipped',
+            'status': 'success',
             'chunk_index': chunk_spec.chunk_index,
             'chunk_id': chunk_spec.chunk_id,
             'start_idx': chunk_spec.start_idx,
             'end_idx': chunk_spec.end_idx,
             'output_path': chunk_spec.output_path,
-            'processed_dates': 0,
+            'processed_dates': len(results.get('init_dates', [])),
         }
 
-    processor.save_processed_datasets(
-        results,
-        info_dir=info_dir,
-        date_start_idx=chunk_spec.start_idx,
-        date_end_idx=chunk_spec.end_idx,
-        target_coll=None,
-        single_fcst_mode=bool(single_fcst_mode),
-        skip_calc_mode=False,
-    )
-
-    return {
-        'status': 'success',
-        'chunk_index': chunk_spec.chunk_index,
-        'chunk_id': chunk_spec.chunk_id,
-        'start_idx': chunk_spec.start_idx,
-        'end_idx': chunk_spec.end_idx,
-        'output_path': chunk_spec.output_path,
-        'processed_dates': len(results.get('init_dates', [])),
-    }
+    return _run_with_chunk_output_capture(log_level, chunk_label, _run)
 
 
 def _time_label(value):
@@ -229,59 +263,66 @@ def _resolve_all_valid_times(processor):
 
 
 def _run_time_chunk_worker(config_path, info_dir, chunk_spec,
-                           dataset_type, single_fcst_mode):
+                           dataset_type, single_fcst_mode,
+                           log_level='normal'):
     '''Worker entrypoint for one analysis or climatology time chunk.'''
-    processor = BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode)
-    processor.fcst_model = ''
-    if dataset_type == 'ana':
-        processor.clim_model = ''
-    elif dataset_type == 'clim':
-        processor.ana_model = ''
-    else:
-        raise ValueError(f'Invalid time-chunk dataset type: {dataset_type}')
+    chunk_label = f'{dataset_type} dataset chunk {chunk_spec.chunk_id}'
 
-    valid_times = [
-        _parse_time_label(value) for value in chunk_spec.selected_dates
-    ]
-    process_kwargs = {
-        'target_coll': None,
-        'info_dir': info_dir,
-        'date_start_idx': None,
-        'date_end_idx': None,
-        'check_only': False,
-        'skip_calc_mode': False,
-        'single_fcst_mode': single_fcst_mode,
-    }
-    if dataset_type == 'ana':
-        process_kwargs['ana_valid_times'] = valid_times
-    else:
-        process_kwargs['clim_valid_times'] = valid_times
+    def _run():
+        processor = BatchDatasetProcessor.from_yaml(
+            config_path, single_fcst_mode)
+        processor.fcst_model = ''
+        if dataset_type == 'ana':
+            processor.clim_model = ''
+        elif dataset_type == 'clim':
+            processor.ana_model = ''
+        else:
+            raise ValueError(f'Invalid time-chunk dataset type: {dataset_type}')
 
-    results = processor.process_batch(**process_kwargs)
-    if results.get('status') != 'success':
-        reason = results.get('reason', 'unknown')
-        raise RuntimeError(
-            f'{dataset_type} chunk {chunk_spec.chunk_id} failed: {reason}')
+        valid_times = [
+            _parse_time_label(value) for value in chunk_spec.selected_dates
+        ]
+        process_kwargs = {
+            'target_coll': None,
+            'info_dir': info_dir,
+            'date_start_idx': None,
+            'date_end_idx': None,
+            'check_only': False,
+            'skip_calc_mode': False,
+            'single_fcst_mode': single_fcst_mode,
+        }
+        if dataset_type == 'ana':
+            process_kwargs['ana_valid_times'] = valid_times
+        else:
+            process_kwargs['clim_valid_times'] = valid_times
 
-    processor.save_processed_datasets(
-        results,
-        info_dir=info_dir,
-        target_coll=None,
-        single_fcst_mode=bool(single_fcst_mode),
-        skip_calc_mode=False,
-        chunk_id=chunk_spec.chunk_id,
-    )
+        results = processor.process_batch(**process_kwargs)
+        if results.get('status') != 'success':
+            reason = results.get('reason', 'unknown')
+            raise RuntimeError(
+                f'{dataset_type} chunk {chunk_spec.chunk_id} failed: {reason}')
 
-    return {
-        'status': 'success',
-        'chunk_index': chunk_spec.chunk_index,
-        'chunk_id': chunk_spec.chunk_id,
-        'start_idx': chunk_spec.start_idx,
-        'end_idx': chunk_spec.end_idx,
-        'output_path': chunk_spec.output_path,
-        'processed_dates': len(valid_times),
-        'dataset_type': dataset_type,
-    }
+        processor.save_processed_datasets(
+            results,
+            info_dir=info_dir,
+            target_coll=None,
+            single_fcst_mode=bool(single_fcst_mode),
+            skip_calc_mode=False,
+            chunk_id=chunk_spec.chunk_id,
+        )
+
+        return {
+            'status': 'success',
+            'chunk_index': chunk_spec.chunk_index,
+            'chunk_id': chunk_spec.chunk_id,
+            'start_idx': chunk_spec.start_idx,
+            'end_idx': chunk_spec.end_idx,
+            'output_path': chunk_spec.output_path,
+            'processed_dates': len(valid_times),
+            'dataset_type': dataset_type,
+        }
+
+    return _run_with_chunk_output_capture(log_level, chunk_label, _run)
 
 
 def _chunk_result_from_spec(chunk_spec, status=None, error=None):
@@ -316,47 +357,56 @@ def _resolve_final_dataset_files(processor, results, dataset_types):
     return dataset_files
 
 
-def _forecast_needs_processing(config_path, info_dir, single_fcst_mode):
+def _forecast_needs_processing(config_path, info_dir, single_fcst_mode,
+                               log_level='normal'):
     '''Check whether forecast dataset creation is required.'''
-    checker = BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode)
-    checker.ana_model = ''
-    checker.clim_model = ''
-    check_result = checker.process_batch(
-        target_coll=None,
-        info_dir=info_dir,
-        date_start_idx=None,
-        date_end_idx=None,
-        check_only=True,
-        skip_calc_mode=False,
-        single_fcst_mode=single_fcst_mode,
-    )
-    datasets_needed = check_result.get('datasets_needed', [])
-    return 'fcst' in datasets_needed
+    def _run():
+        checker = BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode)
+        checker.ana_model = ''
+        checker.clim_model = ''
+        check_result = checker.process_batch(
+            target_coll=None,
+            info_dir=info_dir,
+            date_start_idx=None,
+            date_end_idx=None,
+            check_only=True,
+            skip_calc_mode=False,
+            single_fcst_mode=single_fcst_mode,
+        )
+        datasets_needed = check_result.get('datasets_needed', [])
+        return 'fcst' in datasets_needed
+
+    return _run_with_chunk_output_capture(
+        log_level, 'forecast existing-dataset check', _run)
 
 
 def _dataset_needs_processing(config_path, info_dir, single_fcst_mode,
-                              dataset_type):
+                              dataset_type, log_level='normal'):
     '''Check whether one source dataset type needs creation.'''
-    checker = BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode)
-    checker.fcst_model = ''
-    if dataset_type == 'ana':
-        checker.clim_model = ''
-    elif dataset_type == 'clim':
-        checker.ana_model = ''
-    else:
-        raise ValueError(f'Invalid dataset type: {dataset_type}')
+    def _run():
+        checker = BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode)
+        checker.fcst_model = ''
+        if dataset_type == 'ana':
+            checker.clim_model = ''
+        elif dataset_type == 'clim':
+            checker.ana_model = ''
+        else:
+            raise ValueError(f'Invalid dataset type: {dataset_type}')
 
-    check_result = checker.process_batch(
-        target_coll=None,
-        info_dir=info_dir,
-        date_start_idx=None,
-        date_end_idx=None,
-        check_only=True,
-        skip_calc_mode=False,
-        single_fcst_mode=single_fcst_mode,
-    )
-    datasets_needed = check_result.get('datasets_needed', [])
-    return dataset_type in datasets_needed
+        check_result = checker.process_batch(
+            target_coll=None,
+            info_dir=info_dir,
+            date_start_idx=None,
+            date_end_idx=None,
+            check_only=True,
+            skip_calc_mode=False,
+            single_fcst_mode=single_fcst_mode,
+        )
+        datasets_needed = check_result.get('datasets_needed', [])
+        return dataset_type in datasets_needed
+
+    return _run_with_chunk_output_capture(
+        log_level, f'{dataset_type} existing-dataset check', _run)
 
 
 def _run_required_chunks(required_chunks, worker_func, worker_args,
@@ -436,8 +486,10 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
     '''Run analysis or climatology build in deterministic valid-time chunks.'''
     timings = []
     overall_start = _start_timing()
-    base_processor = BatchDatasetProcessor.from_yaml(config_path,
-                                                     single_fcst_mode)
+    base_processor = _run_with_chunk_output_capture(
+        runtime_settings.pipeline_log_level,
+        f'{dataset_type} source dataset setup',
+        lambda: BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode))
     process_dataset = bool(getattr(base_processor, f'{dataset_type}_model')
                            and getattr(base_processor,
                                        f'{dataset_type}_model').strip())
@@ -453,12 +505,16 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
 
     check_start = _start_timing()
     if not _dataset_needs_processing(config_path, info_dir, single_fcst_mode,
-                                     dataset_type):
+                                     dataset_type,
+                                     runtime_settings.pipeline_log_level):
         _finish_timing(timings, f'{dataset_type}_existing_dataset_check',
                        check_start)
         print(f'[INFO] {dataset_type.upper()} dataset already valid; '
               f'skipping {dataset_type} chunk processing')
-        existing_datasets_check = base_processor._check_for_existing_datasets()
+        existing_datasets_check = _run_with_chunk_output_capture(
+            runtime_settings.pipeline_log_level,
+            f'{dataset_type} existing-dataset lookup',
+            base_processor._check_for_existing_datasets)
         dataset_files = {}
         existing_datasets = {}
         if existing_datasets_check.get(dataset_type):
@@ -536,6 +592,7 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
             'info_dir': info_dir,
             'dataset_type': dataset_type,
             'single_fcst_mode': single_fcst_mode,
+            'log_level': runtime_settings.pipeline_log_level,
             'max_workers': max_workers,
         },
         dataset_type,
@@ -587,8 +644,10 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
     '''Run source dataset build with parallel forecast chunk processing.'''
     timings = []
     source_start = _start_timing()
-    base_processor = BatchDatasetProcessor.from_yaml(config_path,
-                                                     single_fcst_mode)
+    base_processor = _run_with_chunk_output_capture(
+        runtime_settings.pipeline_log_level,
+        'source dataset build setup',
+        lambda: BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode))
     process_fcst = bool(base_processor.fcst_model and
                         base_processor.fcst_model.strip())
     fcst_start = _start_timing()
@@ -598,8 +657,9 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         'existing_datasets': {},
         'datasets': {},
     }
-    if process_fcst and _forecast_needs_processing(config_path, info_dir,
-                                                   single_fcst_mode):
+    if process_fcst and _forecast_needs_processing(
+            config_path, info_dir, single_fcst_mode,
+            runtime_settings.pipeline_log_level):
         spacing = base_processor.config.get('fcst_spacing', 1)
         init_dates_full = base_processor._parse_date_range_with_spacing(
             base_processor.config['FDATES'], spacing, [])
@@ -671,6 +731,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
                 'config_path': config_path,
                 'info_dir': info_dir,
                 'single_fcst_mode': single_fcst_mode,
+                'log_level': runtime_settings.pipeline_log_level,
                 'max_workers': max_workers,
             },
             'fcst',
@@ -715,11 +776,17 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         check_start = _start_timing()
         print('[INFO] Forecast dataset already valid; skipping forecast '
               'chunk processing')
-        temp_processor = BatchDatasetProcessor.from_yaml(config_path,
-                                                         single_fcst_mode)
+        temp_processor = _run_with_chunk_output_capture(
+            runtime_settings.pipeline_log_level,
+            'forecast existing-dataset lookup setup',
+            lambda: BatchDatasetProcessor.from_yaml(
+                config_path, single_fcst_mode))
         temp_processor.ana_model = ''
         temp_processor.clim_model = ''
-        existing_datasets_check = temp_processor._check_for_existing_datasets()
+        existing_datasets_check = _run_with_chunk_output_capture(
+            runtime_settings.pipeline_log_level,
+            'forecast existing-dataset lookup',
+            temp_processor._check_for_existing_datasets)
         if existing_datasets_check.get('fcst'):
             forecast_results['existing_datasets']['fcst'] = (
                 existing_datasets_check['fcst'])
@@ -756,8 +823,10 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
     dataset_files.update(ana_results.get('dataset_files', {}))
     dataset_files.update(clim_results.get('dataset_files', {}))
 
-    final_processor = BatchDatasetProcessor.from_yaml(config_path,
-                                                      single_fcst_mode)
+    final_processor = _run_with_chunk_output_capture(
+        runtime_settings.pipeline_log_level,
+        'source dataset final metadata setup',
+        lambda: BatchDatasetProcessor.from_yaml(config_path, single_fcst_mode))
     spacing = final_processor.config.get('fcst_spacing', 1)
     exclude_dates = final_processor.config.get('exclude_dates', [])
     init_dates = final_processor._parse_date_range_with_spacing(

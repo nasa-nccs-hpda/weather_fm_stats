@@ -167,6 +167,9 @@ def parse_arguments():
                         help='Pipeline resume mode')
     parser.add_argument('--pipeline_summary_file',
                         help='Pipeline summary filename in output directory')
+    parser.add_argument('--pipeline_log_level',
+                        choices=['normal', 'verbose', 'debug'],
+                        help='Pipeline logging verbosity')
     parser.add_argument('--pipeline_max_workers_dataset', type=int,
                         help='Maximum worker processes for dataset build stage')
     parser.add_argument('--pipeline_max_workers_dataset_fcst', type=int,
@@ -414,6 +417,7 @@ def print_runtime_contract(runtime_settings):
     print(f'  branch_execution={runtime_settings.pipeline_branch_execution}')
     print(f'  resume_mode={runtime_settings.pipeline_resume_mode}')
     print(f'  summary_file={runtime_settings.pipeline_summary_file}')
+    print(f'  log_level={runtime_settings.pipeline_log_level}')
     print(f'  max_workers_dataset={runtime_settings.pipeline_max_workers_dataset}')
     print(f'  max_workers_dataset_fcst={runtime_settings.pipeline_max_workers_dataset_fcst}')
     print(f'  max_workers_dataset_ana={runtime_settings.pipeline_max_workers_dataset_ana}')
@@ -510,6 +514,8 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
                 f'{runtime_settings.pipeline_branch_execution}\n')
         f.write(f'pipeline_resume_mode: '
                 f'{runtime_settings.pipeline_resume_mode}\n')
+        f.write(f'pipeline_log_level: '
+                f'{runtime_settings.pipeline_log_level}\n')
         for branch_name, branch_result in branch_results.items():
             f.write(f'{branch_name}_status: {branch_result["status"]}\n')
             if branch_result.get('error'):

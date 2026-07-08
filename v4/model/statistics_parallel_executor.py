@@ -1,5 +1,7 @@
 '''Statistics parallel execution helpers for v4 pipeline mode.'''
 
+import contextlib
+import io
 import os
 import sys
 import time
@@ -11,6 +13,32 @@ import xarray as xr
 
 from model.chunk_plan import InitDateChunkPlanner, write_chunk_plan
 from model.statistics_processor import StatisticsProcessor
+
+
+def _is_verbose_logging(log_level):
+    '''Return True when detailed worker output should pass through.'''
+    return str(log_level or 'normal').lower() in {'verbose', 'debug'}
+
+
+def _run_with_chunk_output_capture(log_level, chunk_label, operation):
+    '''Run a chunk operation while suppressing noisy internals by default.'''
+    if _is_verbose_logging(log_level):
+        return operation()
+
+    buffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buffer):
+            return operation()
+    except Exception:
+        captured_lines = [
+            line for line in buffer.getvalue().splitlines()
+            if line.strip()
+        ]
+        if captured_lines:
+            print(f'[ERROR] {chunk_label} captured output before failure:')
+            for line in captured_lines[-20:]:
+                print(f'  {line}')
+        raise
 
 
 def get_current_memory_mb():
@@ -131,42 +159,47 @@ def _remove_stale_stats_chunks(chunk_specs):
 
 
 def _run_stats_chunk_worker(stats_kind, processor_config, dataset_files,
-                            leads, info_dir, chunk_spec):
+                            leads, info_dir, chunk_spec, log_level='normal'):
     '''Worker entrypoint for one statistics chunk.'''
-    stats_type = _stats_type_for_branch(stats_kind)
-    stats_processor = StatisticsProcessor(
-        processor_config,
-        dataset_files=dataset_files,
-        init_dates=_parse_chunk_dates(chunk_spec),
-        leads=leads,
-    )
+    chunk_label = f'{stats_kind} statistics chunk {chunk_spec.chunk_id}'
 
-    if stats_kind == 'regional':
-        stats_processor.run_regional_statistics(
-            info_dir=info_dir,
-            using_chunks=True,
-            chunk_number=chunk_spec.chunk_id,
-            skip_avg=True,
-        )
-    else:
-        stats_processor.run_global_statistics(
-            info_dir=info_dir,
-            using_chunks=True,
-            chunk_number=chunk_spec.chunk_id,
-            skip_avg=True,
+    def _run():
+        stats_type = _stats_type_for_branch(stats_kind)
+        stats_processor = StatisticsProcessor(
+            processor_config,
+            dataset_files=dataset_files,
+            init_dates=_parse_chunk_dates(chunk_spec),
+            leads=leads,
         )
 
-    return {
-        'status': 'success',
-        'chunk_index': chunk_spec.chunk_index,
-        'chunk_id': chunk_spec.chunk_id,
-        'start_idx': chunk_spec.start_idx,
-        'end_idx': chunk_spec.end_idx,
-        'output_path': chunk_spec.output_path,
-        'processed_dates': len(chunk_spec.selected_dates),
-        'max_memory_mb': get_current_memory_mb(),
-        'stats_type': stats_type,
-    }
+        if stats_kind == 'regional':
+            stats_processor.run_regional_statistics(
+                info_dir=info_dir,
+                using_chunks=True,
+                chunk_number=chunk_spec.chunk_id,
+                skip_avg=True,
+            )
+        else:
+            stats_processor.run_global_statistics(
+                info_dir=info_dir,
+                using_chunks=True,
+                chunk_number=chunk_spec.chunk_id,
+                skip_avg=True,
+            )
+
+        return {
+            'status': 'success',
+            'chunk_index': chunk_spec.chunk_index,
+            'chunk_id': chunk_spec.chunk_id,
+            'start_idx': chunk_spec.start_idx,
+            'end_idx': chunk_spec.end_idx,
+            'output_path': chunk_spec.output_path,
+            'processed_dates': len(chunk_spec.selected_dates),
+            'max_memory_mb': get_current_memory_mb(),
+            'stats_type': stats_type,
+        }
+
+    return _run_with_chunk_output_capture(log_level, chunk_label, _run)
 
 
 def _chunk_result_from_spec(chunk_spec, status=None, error=None):
@@ -292,7 +325,8 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
             try:
                 result = _run_stats_chunk_worker(
                     stats_kind, processor_config, dataset_files, leads,
-                    info_dir, chunk_spec)
+                    info_dir, chunk_spec,
+                    log_level=runtime_settings.pipeline_log_level)
                 chunk_spec.status = result['status']
                 chunk_results.append(result)
                 completed_required_chunks += 1
@@ -329,6 +363,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
                     leads,
                     info_dir,
                     chunk_spec,
+                    runtime_settings.pipeline_log_level,
                 ): chunk_spec
                 for chunk_spec in required_chunks
             }

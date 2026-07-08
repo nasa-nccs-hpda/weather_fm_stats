@@ -1,7 +1,7 @@
 Step 10: Logging Output Consolidation
 
 Status
-- Planned.
+- In progress.
 
 Reference Log
 - Use v4/logs/stats_v4_pipeline_direct_20260708_085841.out as a reference for
@@ -69,3 +69,29 @@ Acceptance Criteria
 - Existing warnings and errors remain visible.
 - Verbose/debug mode can still expose detailed validation, file, variable,
   dimension, and target-grid information when needed.
+
+Implementation Notes
+- Added pipeline_log_level with allowed values normal, verbose, and debug.
+- Default pipeline_log_level is normal.
+- Added CLI support for --pipeline_log_level and included the resolved value in
+  the runtime contract and run_summary.txt.
+- Added pipeline_log_level: normal to the example YAML pipeline defaults.
+- In normal mode, dataset chunk workers capture noisy internal stdout from
+  BatchDatasetProcessor so chunks do not print generic full-run setup,
+  validation, target-grid, and batch-processing banners.
+- In normal mode, regional/global statistics chunk workers capture noisy
+  internal stdout from StatisticsProcessor so chunks do not print generic
+  standalone statistics banners.
+- In verbose/debug mode, worker internals are allowed through for diagnostics.
+- If a captured worker fails, the tail of captured output is printed with an
+  explicit chunk/failure label to aid debugging.
+- Stage 2 existing-dataset setup/check calls are also captured in normal mode
+  to reduce repeated target-grid and validation banners during reused runs.
+
+Remaining Work
+- Further consolidate parent-process normal output into forecast, analysis,
+  climatology, regional statistics, global statistics, and final summary
+  sections.
+- Decide whether resource START/END lines should remain in default output or
+  move to verbose with only the final resource summary shown by default.
+- Improve child-process CPU/RAM accounting beyond parent-process metrics.
