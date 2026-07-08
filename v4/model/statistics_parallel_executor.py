@@ -54,6 +54,31 @@ def get_current_memory_mb():
     return round(max_rss / 1024, 2)
 
 
+def _add_worker_cpu_metrics(result, start_wall, start_cpu):
+    '''Attach CPU metrics measured inside one statistics worker.'''
+    worker_wall_seconds = round(time.time() - start_wall, 2)
+    worker_cpu_seconds = round(time.process_time() - start_cpu, 2)
+    worker_cpu_percent = None
+    if worker_wall_seconds > 0:
+        worker_cpu_percent = round(
+            (worker_cpu_seconds / worker_wall_seconds) * 100, 2)
+    result['worker_wall_seconds'] = worker_wall_seconds
+    result['worker_cpu_seconds'] = worker_cpu_seconds
+    result['worker_cpu_percent'] = worker_cpu_percent
+    return result
+
+
+def _sum_worker_cpu_seconds(chunk_results):
+    '''Return summed worker CPU seconds for completed chunk results.'''
+    worker_cpu_values = [
+        result.get('worker_cpu_seconds') for result in chunk_results
+        if result.get('worker_cpu_seconds') is not None
+    ]
+    if not worker_cpu_values:
+        return None
+    return round(sum(worker_cpu_values), 2)
+
+
 def _resolve_stats_workers(runtime_settings, num_chunks, stats_kind=None):
     '''Resolve stats worker count conservatively for memory-heavy work.'''
     slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK')
@@ -162,6 +187,8 @@ def _run_stats_chunk_worker(stats_kind, processor_config, dataset_files,
                             leads, info_dir, chunk_spec, log_level='normal'):
     '''Worker entrypoint for one statistics chunk.'''
     chunk_label = f'{stats_kind} statistics chunk {chunk_spec.chunk_id}'
+    worker_start_wall = time.time()
+    worker_start_cpu = time.process_time()
 
     def _run():
         stats_type = _stats_type_for_branch(stats_kind)
@@ -199,7 +226,9 @@ def _run_stats_chunk_worker(stats_kind, processor_config, dataset_files,
             'stats_type': stats_type,
         }
 
-    return _run_with_chunk_output_capture(log_level, chunk_label, _run)
+    result = _run_with_chunk_output_capture(log_level, chunk_label, _run)
+    return _add_worker_cpu_metrics(
+        result, worker_start_wall, worker_start_cpu)
 
 
 def _chunk_result_from_spec(chunk_spec, status=None, error=None):
@@ -336,6 +365,10 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
                       f'{len(required_chunks)} '
                       f'dates={result.get("processed_dates")} '
                       f'max_memory_mb={result.get("max_memory_mb")} '
+                      f'worker_cpu_seconds='
+                      f'{result.get("worker_cpu_seconds")} '
+                      f'worker_cpu_pct='
+                      f'{result.get("worker_cpu_percent")} '
                       f'wall_seconds={round(time.time() - chunk_start, 2)}')
             except Exception as exc:
                 traceback.print_exc()
@@ -386,6 +419,10 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
                           f'{len(required_chunks)} '
                           f'dates={result.get("processed_dates")} '
                           f'max_memory_mb={result.get("max_memory_mb")} '
+                          f'worker_cpu_seconds='
+                          f'{result.get("worker_cpu_seconds")} '
+                          f'worker_cpu_pct='
+                          f'{result.get("worker_cpu_percent")} '
                           f'elapsed_since_submit_seconds='
                           f'{round(time.time() - future_start_times[future], 2)}')
                 except Exception as exc:
@@ -420,6 +457,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
         1 for result in chunk_results if result.get('status') == 'success')
     failed_chunk_count = sum(
         1 for result in chunk_results if result.get('status') == 'failed')
+    worker_cpu_seconds = _sum_worker_cpu_seconds(chunk_results)
 
     if chunk_failures:
         return {
@@ -437,6 +475,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
             'configured_max_workers': configured_max_workers,
             'chunk_size': runtime_settings.pipeline_chunk_size_stats,
             'max_memory_mb': branch_max_memory,
+            'worker_cpu_seconds': worker_cpu_seconds,
             'output_path': expected_output_path,
         }
 
@@ -457,6 +496,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
             'configured_max_workers': configured_max_workers,
             'chunk_size': runtime_settings.pipeline_chunk_size_stats,
             'max_memory_mb': branch_max_memory,
+            'worker_cpu_seconds': worker_cpu_seconds,
             'output_path': expected_output_path,
         }
 
@@ -475,5 +515,6 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
         'configured_max_workers': configured_max_workers,
         'chunk_size': runtime_settings.pipeline_chunk_size_stats,
         'max_memory_mb': branch_max_memory,
+        'worker_cpu_seconds': worker_cpu_seconds,
         'output_path': expected_output_path,
     }

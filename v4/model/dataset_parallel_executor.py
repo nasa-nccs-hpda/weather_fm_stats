@@ -96,7 +96,7 @@ def _start_timing():
     }
 
 
-def _finish_timing(timings, name, start_marker):
+def _finish_timing(timings, name, start_marker, cpu_seconds_override=None):
     '''Append one elapsed-time and CPU-use record.'''
     if isinstance(start_marker, dict):
         start_wall = start_marker['wall']
@@ -110,7 +110,12 @@ def _finish_timing(timings, name, start_marker):
     wall_seconds = round(time.time() - start_wall, 2)
     cpu_seconds = None
     cpu_percent_of_allocation = None
-    if start_cpu is not None:
+    if cpu_seconds_override is not None:
+        cpu_seconds = round(cpu_seconds_override, 2)
+        if wall_seconds > 0 and allocated_cpus:
+            cpu_percent_of_allocation = round(
+                (cpu_seconds / (wall_seconds * allocated_cpus)) * 100, 2)
+    elif start_cpu is not None:
         cpu_seconds = round(_cpu_total_seconds() - start_cpu, 2)
         if wall_seconds > 0 and allocated_cpus:
             cpu_percent_of_allocation = round(
@@ -127,6 +132,31 @@ def _finish_timing(timings, name, start_marker):
           f'cpu_seconds={cpu_seconds} '
           f'cpu_pct_of_alloc={cpu_percent_of_allocation} '
           f'allocated_cpus={allocated_cpus}', flush=True)
+
+
+def _add_worker_cpu_metrics(result, start_wall, start_cpu):
+    '''Attach CPU metrics measured inside one worker process.'''
+    worker_wall_seconds = round(time.time() - start_wall, 2)
+    worker_cpu_seconds = round(time.process_time() - start_cpu, 2)
+    worker_cpu_percent = None
+    if worker_wall_seconds > 0:
+        worker_cpu_percent = round(
+            (worker_cpu_seconds / worker_wall_seconds) * 100, 2)
+    result['worker_wall_seconds'] = worker_wall_seconds
+    result['worker_cpu_seconds'] = worker_cpu_seconds
+    result['worker_cpu_percent'] = worker_cpu_percent
+    return result
+
+
+def _sum_worker_cpu_seconds(chunk_results):
+    '''Return summed worker CPU seconds for completed chunk results.'''
+    worker_cpu_values = [
+        result.get('worker_cpu_seconds') for result in chunk_results
+        if result.get('worker_cpu_seconds') is not None
+    ]
+    if not worker_cpu_values:
+        return None
+    return round(sum(worker_cpu_values), 2)
 
 
 def _chunk_log_prefix(dataset_type):
@@ -152,7 +182,10 @@ def _log_chunk_completed(dataset_type, result, completed_count,
           f'{completed_count}/{total_chunks}: {result["chunk_id"]} '
           f'status={result["status"]} '
           f'processed_dates={result.get("processed_dates")} '
-          f'output={output_name} elapsed_seconds={elapsed}',
+          f'output={output_name} '
+          f'worker_cpu_seconds={result.get("worker_cpu_seconds")} '
+          f'worker_cpu_pct={result.get("worker_cpu_percent")} '
+          f'elapsed_seconds={elapsed}',
           flush=True)
 
 
@@ -170,6 +203,8 @@ def _run_fcst_chunk_worker(config_path, info_dir, chunk_spec,
                            single_fcst_mode, log_level='normal'):
     '''Worker entrypoint for one forecast chunk.'''
     chunk_label = f'forecast dataset chunk {chunk_spec.chunk_id}'
+    worker_start_wall = time.time()
+    worker_start_cpu = time.process_time()
 
     def _run():
         processor = BatchDatasetProcessor.from_yaml(
@@ -223,7 +258,9 @@ def _run_fcst_chunk_worker(config_path, info_dir, chunk_spec,
             'processed_dates': len(results.get('init_dates', [])),
         }
 
-    return _run_with_chunk_output_capture(log_level, chunk_label, _run)
+    result = _run_with_chunk_output_capture(log_level, chunk_label, _run)
+    return _add_worker_cpu_metrics(
+        result, worker_start_wall, worker_start_cpu)
 
 
 def _time_label(value):
@@ -267,6 +304,8 @@ def _run_time_chunk_worker(config_path, info_dir, chunk_spec,
                            log_level='normal'):
     '''Worker entrypoint for one analysis or climatology time chunk.'''
     chunk_label = f'{dataset_type} dataset chunk {chunk_spec.chunk_id}'
+    worker_start_wall = time.time()
+    worker_start_cpu = time.process_time()
 
     def _run():
         processor = BatchDatasetProcessor.from_yaml(
@@ -322,7 +361,9 @@ def _run_time_chunk_worker(config_path, info_dir, chunk_spec,
             'dataset_type': dataset_type,
         }
 
-    return _run_with_chunk_output_capture(log_level, chunk_label, _run)
+    result = _run_with_chunk_output_capture(log_level, chunk_label, _run)
+    return _add_worker_cpu_metrics(
+        result, worker_start_wall, worker_start_cpu)
 
 
 def _chunk_result_from_spec(chunk_spec, status=None, error=None):
@@ -599,7 +640,9 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
         },
         dataset_type,
     )
-    _finish_timing(timings, f'{dataset_type}_chunk_execution', chunk_start)
+    _finish_timing(
+        timings, f'{dataset_type}_chunk_execution', chunk_start,
+        cpu_seconds_override=_sum_worker_cpu_seconds(new_results))
     chunk_results.extend(new_results)
     chunk_results = sorted(chunk_results, key=lambda item: item['chunk_index'])
     write_chunk_plan(plan_path, chunk_specs)
@@ -741,7 +784,9 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
             'fcst',
         )
         chunk_results.extend(new_results)
-        _finish_timing(timings, 'fcst_chunk_execution', chunk_start)
+        _finish_timing(
+            timings, 'fcst_chunk_execution', chunk_start,
+            cpu_seconds_override=_sum_worker_cpu_seconds(new_results))
 
         chunk_results = sorted(
             chunk_results, key=lambda item: item['chunk_index'])

@@ -75,6 +75,8 @@ Implementation Notes
 - Default pipeline_log_level is normal.
 - Added CLI support for --pipeline_log_level and included the resolved value in
   the runtime contract and run_summary.txt.
+- The resolved pipeline runtime contract is hidden in normal output and is
+  printed only in verbose/debug mode.
 - Added pipeline_log_level: normal to the example YAML pipeline defaults.
 - In normal mode, dataset chunk workers capture noisy internal stdout from
   BatchDatasetProcessor so chunks do not print generic full-run setup,
@@ -94,6 +96,9 @@ Implementation Notes
   OUTPUTS AND STATUS, RESOURCE USAGE, and TIMING.
 - Added overall Python pipeline wall time to the final summary and
   run_summary.txt.
+- Added worker-process CPU logging for dataset and statistics chunks so
+  chunk-execution CPU reflects summed child worker CPU instead of only parent
+  process CPU.
 - Grouped dataset sub-step resource/timing lines under fcst, ana, clim, and
   source headings; statistics branch resource/timing lines are reported under
   regional/global branch headings.

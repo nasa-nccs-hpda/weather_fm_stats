@@ -415,6 +415,9 @@ def run_merge_command(args):
 
 def print_runtime_contract(runtime_settings):
     '''Print the resolved step-1 runtime contract settings.'''
+    if runtime_settings.pipeline_log_level == 'normal':
+        return
+
     print('\nResolved pipeline runtime contract:')
     print(f'  stats_types={runtime_settings.stats_types}')
     print(f'  fail_policy={runtime_settings.pipeline_fail_policy}')
@@ -488,6 +491,15 @@ def finalize_branch_result(branch_name, branch_result, branch_start_time,
     branch_result['start_time'] = branch_start_label
     branch_result['end_time'] = datetime.now().isoformat()
     branch_result['wall_seconds'] = round(time.time() - branch_start_time, 2)
+    worker_cpu_seconds = branch_result.get('worker_cpu_seconds')
+    if worker_cpu_seconds is not None:
+        allocated_cpus = _allocated_cpu_count()
+        branch_result['worker_cpu_percent_of_allocation'] = None
+        if branch_result['wall_seconds'] > 0 and allocated_cpus:
+            branch_result['worker_cpu_percent_of_allocation'] = round(
+                (worker_cpu_seconds /
+                 (branch_result['wall_seconds'] * allocated_cpus)) * 100, 2)
+        branch_result['allocated_cpus'] = allocated_cpus
     output_path = branch_result.get('output_path')
     if output_path:
         branch_result['output_exists'] = os.path.exists(output_path)
@@ -582,6 +594,10 @@ def _print_resource_summary(phase_metrics, dataset_timings, branch_results,
             print(f'    {branch_name}: '
                   f'max_memory_mb='
                   f'{_fmt_value(result.get("max_memory_mb"))} '
+                  f'worker_cpu_seconds='
+                  f'{_fmt_value(result.get("worker_cpu_seconds"))} '
+                  f'worker_cpu_pct_alloc='
+                  f'{_fmt_value(result.get("worker_cpu_percent_of_allocation"))} '
                   f'max_workers={_fmt_value(result.get("max_workers"))} '
                   f'configured_workers='
                   f'{_fmt_value(result.get("configured_max_workers"))}')
@@ -728,6 +744,13 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
             if branch_result.get('wall_seconds') is not None:
                 f.write(f'{branch_name}_wall_seconds: '
                         f'{branch_result["wall_seconds"]}\n')
+            if branch_result.get('worker_cpu_seconds') is not None:
+                f.write(f'{branch_name}_worker_cpu_seconds: '
+                        f'{branch_result["worker_cpu_seconds"]}\n')
+                f.write(f'{branch_name}_worker_cpu_percent_of_allocation: '
+                        f'{branch_result.get("worker_cpu_percent_of_allocation")}\n')
+                f.write(f'{branch_name}_allocated_cpus: '
+                        f'{branch_result.get("allocated_cpus")}\n')
             if branch_result.get('output_path'):
                 f.write(f'{branch_name}_output_path: '
                         f'{branch_result["output_path"]}\n')
@@ -805,6 +828,10 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
             for branch_name, result in branch_results.items():
                 f.write(f'  {branch_name}: '
                         f'max_memory_mb={result.get("max_memory_mb")} '
+                        f'worker_cpu_seconds='
+                        f'{result.get("worker_cpu_seconds")} '
+                        f'worker_cpu_pct_alloc='
+                        f'{result.get("worker_cpu_percent_of_allocation")} '
                         f'max_workers={result.get("max_workers")} '
                         f'configured_workers='
                         f'{result.get("configured_max_workers")}\n')
