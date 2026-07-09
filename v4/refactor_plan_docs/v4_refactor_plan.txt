@@ -78,8 +78,12 @@
   - Goal: prove the refactor changed compute strategy, not scientific results.
 
 13. Remove old multi-job assumptions (Estimated LOC: 80-220)
-  - Delete or isolate legacy code that expects SLURM dependency chains.
-  - Update docs and help text so single job plus in-process parallelism is the official model.
+  - Audit v4 scripts, CLI help, docs, and comments for stale references to v1-style SLURM dependency chains.
+  - Keep v1/v2/v3 legacy workflows available, but make v4 documentation clearly describe the single-job pipeline as the official v4 model.
+  - Remove or isolate unused v4 code paths that assume external SLURM job arrays or dependency-managed stage scripts.
+  - Make manual debug entrypoints explicit as debugging tools, not the normal production workflow.
+  - Update README and v4 help text so users know when to use sbatch_stats_v4.run, salloc_stats_v4.run, and the lower-level Python flags.
+  - Preserve backwards-compatible manual commands that are still useful for debugging, merging, or recovery.
 
 14. Improve v4 performance and optional accelerator usage (Estimated LOC: TBD)
   - Investigate why the v4 single-job workflow is not faster than the v1 multi-job workflow in Step 12 timing tests.

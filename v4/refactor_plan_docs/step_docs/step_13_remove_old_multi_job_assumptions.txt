@@ -1,0 +1,74 @@
+Step 13: Remove Old Multi-Job Assumptions
+
+Status
+- Planned.
+
+Reason For This Step
+- v4 now has a single-job pipeline that builds source datasets and then runs
+  statistics branches inside one Python-orchestrated SLURM job.
+- Older versions used many SLURM jobs, job arrays, dependency chains, and
+  cleanup jobs to coordinate the same workflow.
+- Some scripts, docs, help text, comments, or lower-level entrypoints may still
+  imply that v4 should be operated like the old multi-job workflow.
+- Step 13 should make the official v4 operating model clear without deleting
+  useful legacy versions or debugging tools.
+
+Primary Goals
+- Make `sbatch_stats_v4.run` and `salloc_stats_v4.run` the documented normal
+  v4 entrypoints.
+- Treat lower-level Python flags as debugging, recovery, or manual rerun tools.
+- Remove or isolate stale v4 assumptions about external SLURM dependency
+  chains, job arrays, and stage-specific job scripts.
+- Update user-facing docs so v4 is described as single-job plus in-process
+  parallelism.
+- Preserve v1/v2/v3 as legacy comparison workflows.
+
+Planned Work
+- Audit v4 shell scripts for stale names, comments, help text, and job-flow
+  descriptions that imply v1-style dependency orchestration.
+- Audit `controller/cli_controller.py` argument help for flags that should be
+  described as debug/manual tools rather than normal workflow commands.
+- Audit v4 refactor docs and README wording for references to multi-job
+  assumptions that no longer apply to v4.
+- Identify any unused v4 code paths that exist only for external SLURM
+  dependency-chain execution.
+- Keep useful manual merge, clean, dataset, and stats commands, but document
+  them as recovery/debug entrypoints.
+- Update README workflow guidance so login-node and allocation-node usage are
+  clear and consistent.
+- Keep Step 12 comparison tooling separate from the official v4 run path.
+
+Out Of Scope For This Step
+- Do not delete v1, v2, or v3.
+- Do not remove lower-level Python flags that are still needed for debugging,
+  merging, or manual recovery.
+- Do not change scientific calculations.
+- Do not change worker counts, chunk sizes, or performance behavior.
+- Do not implement Step 14 performance improvements here.
+
+Planned Files To Inspect Or Touch
+- README.md
+- v4/sbatch_stats_v4.run
+- v4/salloc_stats_v4.run
+- v4/controller/cli_controller.py
+- v4/stats_v4.py
+- v4/refactor_plan_docs/v4_refactor_plan.txt
+- v4/refactor_plan_docs/step_docs/step_13_remove_old_multi_job_assumptions.txt
+
+Planned Acceptance Criteria
+- README identifies the normal v4 workflow as a single SLURM job with
+  in-process parallelism.
+- v4 wrapper comments and output do not imply that v4 runs through many
+  dependency-managed SLURM jobs.
+- CLI help text distinguishes normal pipeline mode from manual/debug modes.
+- Legacy v1/v2/v3 workflows remain available for comparison.
+- Step 12 comparison tooling remains outside the normal v4 workflow.
+
+Validation Notes
+- Pending.
+
+Known Risks
+- Removing too much could make manual recovery harder after partial outputs or
+  failed merge steps.
+- Over-documenting low-level flags could confuse normal users who should only
+  need the v4 wrapper scripts.
