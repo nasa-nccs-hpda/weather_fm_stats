@@ -106,6 +106,13 @@ Validation Notes
   setup/process/save worker-wall timings for rebuilt source datasets. This is
   intended to identify whether climatology time is dominated by setup, file
   processing/regridding, or NetCDF writes before changing clim worker counts.
+- Third implementation pass changed climatology dataset creation to a
+  regrid-once default path. The v4 valid-time chunk path repeatedly regridded
+  the same climatology cycle files in every chunk; the new path runs the
+  existing full clim processor once, regrids each needed cycle once, assembles
+  all requested valid times, and writes the final clim dataset directly. This
+  preserves the existing scientific path while removing duplicated clim
+  regridding work.
 
 Known Risks
 - Higher worker counts can increase memory pressure, especially for

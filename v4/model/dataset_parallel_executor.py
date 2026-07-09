@@ -429,6 +429,67 @@ def _run_time_chunk_worker(config_path, info_dir, chunk_spec,
         result, worker_start_wall, worker_start_cpu)
 
 
+def _run_clim_regrid_once_worker(config_path, info_dir, valid_times,
+                                 single_fcst_mode, log_level='normal'):
+    '''Build the full climatology dataset after regridding each cycle once.'''
+    chunk_label = 'climatology regrid-once dataset build'
+    worker_start_wall = time.time()
+    worker_start_cpu = time.process_time()
+
+    def _run():
+        profile = {}
+        setup_start = time.time()
+        processor = BatchDatasetProcessor.from_yaml(
+            config_path, single_fcst_mode)
+        profile['setup_wall_seconds'] = round(time.time() - setup_start, 2)
+        processor.fcst_model = ''
+        processor.ana_model = ''
+
+        process_start = time.time()
+        results = processor.process_batch(
+            target_coll=None,
+            info_dir=info_dir,
+            date_start_idx=None,
+            date_end_idx=None,
+            check_only=False,
+            skip_calc_mode=False,
+            single_fcst_mode=single_fcst_mode,
+            clim_valid_times=valid_times,
+        )
+        profile['process_wall_seconds'] = round(
+            time.time() - process_start, 2)
+        if results.get('status') != 'success':
+            reason = results.get('reason', 'unknown')
+            raise RuntimeError(f'clim regrid-once build failed: {reason}')
+
+        save_start = time.time()
+        processor.save_processed_datasets(
+            results,
+            info_dir=info_dir,
+            target_coll=None,
+            single_fcst_mode=bool(single_fcst_mode),
+            skip_calc_mode=False,
+        )
+        profile['save_wall_seconds'] = round(time.time() - save_start, 2)
+
+        return {
+            'status': 'success',
+            'chunk_index': 0,
+            'chunk_id': 'clim_regrid_once',
+            'start_idx': 0,
+            'end_idx': len(valid_times) - 1,
+            'output_path': os.path.join(
+                'outputs', processor._generate_output_filenm('clim')),
+            'processed_dates': len(valid_times),
+            'dataset_type': 'clim',
+            'profile': profile,
+        }
+
+    result = _run_with_chunk_output_capture(log_level, chunk_label, _run)
+    return _add_worker_cpu_metrics(
+        result, worker_start_wall, worker_start_cpu)
+
+
 def _chunk_result_from_spec(chunk_spec, status=None, error=None):
     '''Build a deterministic result record from a chunk spec.'''
     result = {
@@ -645,6 +706,62 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
             'status': 'failed',
             'reason': f'no_{dataset_type}_valid_times',
             'chunk_results': [],
+            'timings': timings,
+        }
+
+    if dataset_type == 'clim':
+        print('[INFO] CLIM regrid-once plan: process unique climatology '
+              'cycle files once, then assemble all valid times in one pass')
+        build_start = _start_timing()
+        try:
+            result = _run_clim_regrid_once_worker(
+                config_path,
+                info_dir,
+                valid_times,
+                single_fcst_mode,
+                log_level=runtime_settings.pipeline_log_level,
+            )
+        except Exception as exc:
+            traceback.print_exc()
+            _finish_timing(timings, 'clim_regrid_once_execution',
+                           build_start)
+            _finish_timing(timings, 'clim_total', overall_start)
+            return {
+                'status': 'failed',
+                'reason': 'clim_regrid_once_failed',
+                'errors': [str(exc)],
+                'chunk_results': [
+                    {
+                        'status': 'failed',
+                        'chunk_index': 0,
+                        'chunk_id': 'clim_regrid_once',
+                        'start_idx': 0,
+                        'end_idx': len(valid_times) - 1,
+                        'processed_dates': len(valid_times),
+                        'error': str(exc),
+                    }
+                ],
+                'timings': timings,
+            }
+
+        _finish_timing(
+            timings, 'clim_regrid_once_execution', build_start,
+            cpu_seconds_override=result.get('worker_cpu_seconds'))
+        print(f'[INFO] CLIM regrid-once completed: '
+              f'processed_dates={result.get("processed_dates")} '
+              f'output={os.path.basename(result.get("output_path", ""))} '
+              f'worker_cpu_seconds={result.get("worker_cpu_seconds")} '
+              f'worker_cpu_pct={result.get("worker_cpu_percent")}'
+              f'{_format_chunk_profile(result.get("profile"))}',
+              flush=True)
+        _append_chunk_profile_timings(timings, 'clim', [result])
+        _finish_timing(timings, 'clim_total', overall_start)
+        return {
+            'status': 'success',
+            'dataset_files': {'clim': result['output_path']},
+            'existing_datasets': {},
+            'dataset_statuses': {'clim': 'SUCCESS'},
+            'chunk_results': [result],
             'timings': timings,
         }
 
