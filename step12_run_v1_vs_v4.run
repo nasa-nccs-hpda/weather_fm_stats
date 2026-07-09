@@ -9,6 +9,9 @@ poll_seconds="${STEP12_POLL_SECONDS:-30}"
 declare -a result_labels=()
 declare -a result_v1_seconds=()
 declare -a result_v4_seconds=()
+declare -a result_v1_outputs=()
+declare -a result_v4_outputs=()
+missing_output_count=0
 
 require_file() {
     local path="$1"
@@ -24,6 +27,102 @@ elapsed_hms() {
         "$((seconds / 3600))" \
         "$(((seconds % 3600) / 60))" \
         "$((seconds % 60))"
+}
+
+yaml_value() {
+    local yaml_path="$1"
+    local key="$2"
+    awk -v key="$key" '
+        /^[[:space:]]*#/ { next }
+        $0 ~ "^[[:space:]]*" key ":" {
+            sub(".*" key ":[[:space:]]*", "")
+            sub("[[:space:]]*#.*", "")
+            gsub("^[[:space:]]+|[[:space:]]+$", "")
+            print
+            exit
+        }
+    ' "$yaml_path"
+}
+
+expected_output_paths() {
+    local version="$1"
+    local yaml_path="$2"
+    local output_root="${repo_dir}/${version}/outputs"
+
+    local fcst_model
+    local ana_model
+    local clim_model
+    local start_date
+    local end_date
+    local fcst_length
+    local fcst_interval
+    local fcst_spacing
+    local nlat
+    local nlon
+    local stats_types
+    local suffix
+
+    fcst_model="$(yaml_value "$yaml_path" "fcst_model")"
+    ana_model="$(yaml_value "$yaml_path" "ana_model")"
+    clim_model="$(yaml_value "$yaml_path" "clim_model")"
+    start_date="$(yaml_value "$yaml_path" "start_date")"
+    end_date="$(yaml_value "$yaml_path" "end_date")"
+    fcst_length="$(yaml_value "$yaml_path" "fcst_length")"
+    fcst_interval="$(yaml_value "$yaml_path" "fcst_interval")"
+    fcst_spacing="$(yaml_value "$yaml_path" "fcst_spacing")"
+    nlat="$(yaml_value "$yaml_path" "Nlat")"
+    nlon="$(yaml_value "$yaml_path" "Nlon")"
+    stats_types="$(yaml_value "$yaml_path" "stats_types")"
+
+    if [[ -z "$fcst_spacing" ]]; then
+        fcst_spacing=1
+    fi
+    if [[ -z "$stats_types" ]]; then
+        stats_types=both
+    fi
+
+    suffix="${start_date}-${end_date}_len${fcst_length}d_int${fcst_interval}h_spc${fcst_spacing}d_${nlat}x${nlon}.nc4"
+
+    printf '%s\n' "${output_root}/fcst_${fcst_model}_${suffix}"
+    printf '%s\n' "${output_root}/ana_${ana_model}_${suffix}"
+    printf '%s\n' "${output_root}/clim_${clim_model}_${suffix}"
+
+    if [[ "$stats_types" == "regional" || "$stats_types" == "both" ]]; then
+        printf '%s\n' "${output_root}/stats_regional_${fcst_model}_${ana_model}_${clim_model}_${suffix}"
+    fi
+    if [[ "$stats_types" == "global" || "$stats_types" == "both" ]]; then
+        printf '%s\n' "${output_root}/stats_global_${fcst_model}_${ana_model}_${clim_model}_${suffix}"
+    fi
+}
+
+validate_workflow_outputs() {
+    local version="$1"
+    local yaml_path="$2"
+    local label="$3"
+    local expected_file
+    local missing=0
+    local total=0
+
+    echo
+    echo "Checking expected $version outputs for $label"
+    while IFS= read -r expected_file; do
+        total="$((total + 1))"
+        if [[ -f "$expected_file" ]]; then
+            echo "  OK: ${expected_file}"
+        else
+            echo "  MISSING: ${expected_file}"
+            missing="$((missing + 1))"
+        fi
+    done < <(expected_output_paths "$version" "$yaml_path")
+
+    if ((missing > 0)); then
+        missing_output_count="$((missing_output_count + missing))"
+        echo "  Result: MISSING ${missing}/${total} expected file(s)"
+        return 1
+    fi
+
+    echo "  Result: OK ${total}/${total} expected file(s)"
+    return 0
 }
 
 extract_job_ids() {
@@ -167,12 +266,21 @@ run_side_by_side_experiment() {
     wait_for_experiment_jobs "$label" "$v1_start" "$v4_start" \
         "$v1_job_list" "$v4_job_list" "${#v1_jobs[@]}" "${#v4_jobs[@]}"
 
+    local v1_output_status="OK"
+    local v4_output_status="OK"
+    validate_workflow_outputs "v1" "$yaml_path" "$label" || v1_output_status="MISSING"
+    validate_workflow_outputs "v4" "$yaml_path" "$label" || v4_output_status="MISSING"
+
     echo
     echo "Completed $label experiment"
     local result_index
     result_index="$((${#result_labels[@]} - 1))"
     echo "  v1 elapsed: $(elapsed_hms "${result_v1_seconds[$result_index]}")"
     echo "  v4 elapsed: $(elapsed_hms "${result_v4_seconds[$result_index]}")"
+    echo "  v1 outputs: $v1_output_status"
+    echo "  v4 outputs: $v4_output_status"
+    result_v1_outputs+=("$v1_output_status")
+    result_v4_outputs+=("$v4_output_status")
 }
 
 print_summary() {
@@ -180,7 +288,8 @@ print_summary() {
     echo "======================================================================"
     echo "STEP 12 OLD VS NEW TIMING SUMMARY"
     echo "======================================================================"
-    printf '%-12s %-14s %-14s %-14s\n' "Experiment" "v1 elapsed" "v4 elapsed" "v4-v1"
+    printf '%-12s %-14s %-14s %-14s %-10s %-10s\n' \
+        "Experiment" "v1 elapsed" "v4 elapsed" "v4-v1" "v1 files" "v4 files"
 
     local i
     for i in "${!result_labels[@]}"; do
@@ -194,11 +303,13 @@ print_summary() {
         else
             delta_text="+$(elapsed_hms "$delta")"
         fi
-        printf '%-12s %-14s %-14s %-14s\n' \
+        printf '%-12s %-14s %-14s %-14s %-10s %-10s\n' \
             "${result_labels[$i]}" \
             "$(elapsed_hms "$v1")" \
             "$(elapsed_hms "$v4")" \
-            "$delta_text"
+            "$delta_text" \
+            "${result_v1_outputs[$i]}" \
+            "${result_v4_outputs[$i]}"
     done
 }
 
@@ -216,3 +327,9 @@ echo "Poll interval: ${poll_seconds}s"
 run_side_by_side_experiment "short" "$short_yaml"
 run_side_by_side_experiment "long" "$long_yaml"
 print_summary
+
+if ((missing_output_count > 0)); then
+    echo
+    echo "Error: missing ${missing_output_count} expected output file(s)." >&2
+    exit 1
+fi
