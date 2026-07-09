@@ -80,3 +80,11 @@
 13. Remove old multi-job assumptions (Estimated LOC: 80-220)
   - Delete or isolate legacy code that expects SLURM dependency chains.
   - Update docs and help text so single job plus in-process parallelism is the official model.
+
+14. Improve v4 performance and optional accelerator usage (Estimated LOC: TBD)
+  - Investigate why the v4 single-job workflow is not faster than the v1 multi-job workflow in Step 12 timing tests.
+  - Profile dataset creation, merge, regional statistics, and global statistics phases to identify CPU, memory, I/O, and serialization bottlenecks.
+  - Explore better CPU utilization strategies, including chunk-size tuning, worker-count tuning, process startup overhead reduction, and improved data loading/merge behavior.
+  - Evaluate whether selected operations can optionally use GPU acceleration when requested in the YAML.
+  - Add YAML-controlled accelerator settings only after there is a clear CPU/GPU execution path and a safe CPU fallback.
+  - Preserve scientific output equivalence while improving wall-clock runtime.
