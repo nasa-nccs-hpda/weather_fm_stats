@@ -124,6 +124,42 @@ def _finish_timing(timings, name, start_marker, cpu_seconds_override=None):
           f'allocated_cpus={allocated_cpus}', flush=True)
 
 
+def _append_chunk_profile_timings(timings, dataset_type, chunk_results):
+    '''Append summed per-chunk profile timings for source-build diagnosis.'''
+    profile_fields = [
+        ('setup_wall_seconds', 'setup'),
+        ('process_wall_seconds', 'process'),
+        ('save_wall_seconds', 'save'),
+    ]
+    profiles = [
+        result.get('profile') for result in chunk_results
+        if result.get('profile')
+    ]
+    if not profiles:
+        return
+
+    for field_name, label in profile_fields:
+        values = [
+            profile.get(field_name) for profile in profiles
+            if profile.get(field_name) is not None
+        ]
+        if not values:
+            continue
+        wall_seconds = round(sum(values), 2)
+        timing_name = f'{dataset_type}_chunk_{label}_sum'
+        timings.append({
+            'name': timing_name,
+            'wall_seconds': wall_seconds,
+            'cpu_seconds': None,
+            'cpu_percent_of_allocation': None,
+            'allocated_cpus': _allocated_cpu_count(),
+        })
+        print(f'[TIMING] Dataset chunk profile {timing_name}: '
+              f'summed_worker_wall_seconds={wall_seconds} '
+              f'chunks={len(values)}',
+              flush=True)
+
+
 def _add_worker_cpu_metrics(result, start_wall, start_cpu):
     '''Attach CPU metrics measured inside one worker process.'''
     worker_wall_seconds = round(time.time() - start_wall, 2)
@@ -163,11 +199,29 @@ def _log_chunk_queued(dataset_type, chunk_spec, position, total_chunks):
           flush=True)
 
 
+def _format_chunk_profile(profile):
+    '''Format optional per-chunk wall-time profile fields for one log line.'''
+    if not profile:
+        return ''
+    parts = []
+    for key, label in [
+        ('setup_wall_seconds', 'setup'),
+        ('process_wall_seconds', 'process'),
+        ('save_wall_seconds', 'save'),
+    ]:
+        if profile.get(key) is not None:
+            parts.append(f'{label}_wall={profile[key]}')
+    if not parts:
+        return ''
+    return ' profile=' + ','.join(parts)
+
+
 def _log_chunk_completed(dataset_type, result, completed_count,
                          total_chunks, start_time):
     '''Log that a dataset chunk completed.'''
     elapsed = round(time.time() - start_time, 2)
     output_name = os.path.basename(result.get('output_path', ''))
+    profile_text = _format_chunk_profile(result.get('profile'))
     print(f'[INFO] {_chunk_log_prefix(dataset_type)} chunk completed '
           f'{completed_count}/{total_chunks}: {result["chunk_id"]} '
           f'status={result["status"]} '
@@ -175,7 +229,7 @@ def _log_chunk_completed(dataset_type, result, completed_count,
           f'output={output_name} '
           f'worker_cpu_seconds={result.get("worker_cpu_seconds")} '
           f'worker_cpu_pct={result.get("worker_cpu_percent")} '
-          f'elapsed_seconds={elapsed}',
+          f'elapsed_seconds={elapsed}{profile_text}',
           flush=True)
 
 
@@ -197,11 +251,15 @@ def _run_fcst_chunk_worker(config_path, info_dir, chunk_spec,
     worker_start_cpu = time.process_time()
 
     def _run():
+        profile = {}
+        setup_start = time.time()
         processor = BatchDatasetProcessor.from_yaml(
             config_path, single_fcst_mode)
+        profile['setup_wall_seconds'] = round(time.time() - setup_start, 2)
         processor.ana_model = ''
         processor.clim_model = ''
 
+        process_start = time.time()
         results = processor.process_batch(
             target_coll=None,
             info_dir=info_dir,
@@ -211,6 +269,8 @@ def _run_fcst_chunk_worker(config_path, info_dir, chunk_spec,
             skip_calc_mode=False,
             single_fcst_mode=single_fcst_mode,
         )
+        profile['process_wall_seconds'] = round(
+            time.time() - process_start, 2)
 
         if results.get('status') != 'success':
             reason = results.get('reason', 'unknown')
@@ -226,8 +286,10 @@ def _run_fcst_chunk_worker(config_path, info_dir, chunk_spec,
                 'end_idx': chunk_spec.end_idx,
                 'output_path': chunk_spec.output_path,
                 'processed_dates': 0,
+                'profile': profile,
             }
 
+        save_start = time.time()
         processor.save_processed_datasets(
             results,
             info_dir=info_dir,
@@ -237,6 +299,7 @@ def _run_fcst_chunk_worker(config_path, info_dir, chunk_spec,
             single_fcst_mode=bool(single_fcst_mode),
             skip_calc_mode=False,
         )
+        profile['save_wall_seconds'] = round(time.time() - save_start, 2)
 
         return {
             'status': 'success',
@@ -246,6 +309,7 @@ def _run_fcst_chunk_worker(config_path, info_dir, chunk_spec,
             'end_idx': chunk_spec.end_idx,
             'output_path': chunk_spec.output_path,
             'processed_dates': len(results.get('init_dates', [])),
+            'profile': profile,
         }
 
     result = _run_with_chunk_output_capture(log_level, chunk_label, _run)
@@ -298,8 +362,11 @@ def _run_time_chunk_worker(config_path, info_dir, chunk_spec,
     worker_start_cpu = time.process_time()
 
     def _run():
+        profile = {}
+        setup_start = time.time()
         processor = BatchDatasetProcessor.from_yaml(
             config_path, single_fcst_mode)
+        profile['setup_wall_seconds'] = round(time.time() - setup_start, 2)
         processor.fcst_model = ''
         if dataset_type == 'ana':
             processor.clim_model = ''
@@ -325,12 +392,16 @@ def _run_time_chunk_worker(config_path, info_dir, chunk_spec,
         else:
             process_kwargs['clim_valid_times'] = valid_times
 
+        process_start = time.time()
         results = processor.process_batch(**process_kwargs)
+        profile['process_wall_seconds'] = round(
+            time.time() - process_start, 2)
         if results.get('status') != 'success':
             reason = results.get('reason', 'unknown')
             raise RuntimeError(
                 f'{dataset_type} chunk {chunk_spec.chunk_id} failed: {reason}')
 
+        save_start = time.time()
         processor.save_processed_datasets(
             results,
             info_dir=info_dir,
@@ -339,6 +410,7 @@ def _run_time_chunk_worker(config_path, info_dir, chunk_spec,
             skip_calc_mode=False,
             chunk_id=chunk_spec.chunk_id,
         )
+        profile['save_wall_seconds'] = round(time.time() - save_start, 2)
 
         return {
             'status': 'success',
@@ -349,6 +421,7 @@ def _run_time_chunk_worker(config_path, info_dir, chunk_spec,
             'output_path': chunk_spec.output_path,
             'processed_dates': len(valid_times),
             'dataset_type': dataset_type,
+            'profile': profile,
         }
 
     result = _run_with_chunk_output_capture(log_level, chunk_label, _run)
@@ -636,6 +709,7 @@ def _run_time_dataset_build(config_path, info_dir, runtime_settings,
     _finish_timing(
         timings, f'{dataset_type}_chunk_execution', chunk_start,
         cpu_seconds_override=_sum_worker_cpu_seconds(new_results))
+    _append_chunk_profile_timings(timings, dataset_type, new_results)
     chunk_results.extend(new_results)
     chunk_results = sorted(chunk_results, key=lambda item: item['chunk_index'])
     write_chunk_plan(plan_path, chunk_specs)
@@ -783,6 +857,7 @@ def run_parallel_source_dataset_build(config_path, info_dir, runtime_settings,
         _finish_timing(
             timings, 'fcst_chunk_execution', chunk_start,
             cpu_seconds_override=_sum_worker_cpu_seconds(new_results))
+        _append_chunk_profile_timings(timings, 'fcst', new_results)
 
         chunk_results = sorted(
             chunk_results, key=lambda item: item['chunk_index'])

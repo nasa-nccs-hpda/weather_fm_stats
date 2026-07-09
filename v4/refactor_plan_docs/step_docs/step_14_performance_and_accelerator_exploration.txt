@@ -100,6 +100,12 @@ Validation Notes
   example YAMLs now request 16 CPUs and 64G memory, keep regional stats at 8
   workers with 4-date chunks, and test global stats at 16 workers with 2-date
   chunks. Dataset and climatology settings were left conservative.
+- Second implementation pass added source dataset chunk profiling. Forecast,
+  analysis, and climatology chunk-completion logs now include setup, process,
+  and save wall-time fields, and the final timing summary includes summed
+  setup/process/save worker-wall timings for rebuilt source datasets. This is
+  intended to identify whether climatology time is dominated by setup, file
+  processing/regridding, or NetCDF writes before changing clim worker counts.
 
 Known Risks
 - Higher worker counts can increase memory pressure, especially for
