@@ -56,5 +56,5 @@ Below is an example run comparing long and short experiments for the original "v
 
 | Experiment | v1 elapsed | v4 elapsed | v4-v1 | v1 files | v4 files |
 | :---: | :---: | :---: | :---: | :---: | :---: |
-| short | 00:16:04 | 00:04:30 | -00:11:34 | OK | OK |
-| long | 00:35:12 | 00:28:33 | -00:06:39 | OK | OK |
+| short | 00:10:40 | 00:04:00 | -00:06:40 | OK | OK |
+| long | 00:27:11 | 00:19:01 | -00:08:10 | OK | OK |
