@@ -50,11 +50,11 @@ chmod +x salloc_stats_v4.run
 
 Supported ML models are GenCast, AIFS, Prithvi. Supported reanalysis/climatology models are GEOSFP, MERRA2, and ERA5.
 
-## Comparison between v1 (original code) and v4
+## Comparison between original code and v4
+
+Below is an example run comparing long and short experiments for the original "v1" code and the newest "v4" code. There are slight timing differences between each run, due to SLURM scheduling. The newest code runs only slightly slower than the old code, while achieving a much more readable/maintainable code structure and using significantly less compute. Future work is planned to improve the speed of the v4 code.
 
 | Experiment | v1 elapsed | v4 elapsed | v4-v1 | v1 files | v4 files |
 | :---: | :---: | :---: | :---: | :---: | :---: |
 | short | 00:16:05 | 00:17:02 | +00:00:57 | OK | OK |
 | long | 00:31:12 | 00:32:06 | +00:00:54 | OK | OK |
-
-The code runs in very similar times, while achieving a much more readable/maintainable code structure. Future work is planned to improve the runtime of the v4 code.

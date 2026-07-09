@@ -24,10 +24,20 @@ Planned Work
 - Profile source dataset creation, merge, regional statistics, and global
   statistics using existing timing/resource summaries and additional targeted
   measurements if needed.
+- Compare v1 global-stat SLURM fan-out against v4 in-process worker fan-out.
+  A v1 long-run global chunk processed 2 init dates in about 3:47 using 1 CPU
+  at about 94% CPU utilization and 3.45 GB max RSS. Because v1 can launch 16
+  global chunks as separate SLURM jobs, it may be using far more concurrent
+  global-stat workers than v4's current single-allocation worker settings.
 - Add separate regional/global statistics chunk-size controls if testing shows
   they need different chunk sizes.
 - Test higher worker counts for forecast, analysis, regional stats, and global
   stats where memory allows.
+- Initial global-stat experiment: test v4 with higher global concurrency, such
+  as pipeline_cpus=16, pipeline_mem=96G,
+  pipeline_max_workers_stats_global=16, and pipeline_chunk_size_stats=2, then
+  compare global wall time, max RSS, and output equivalence against the Step 12
+  baseline.
 - Keep climatology tuning conservative because previous tests showed memory and
   stability sensitivity.
 - Explore optional regional/global branch concurrency behind a YAML setting,
@@ -79,7 +89,12 @@ Planned Acceptance Criteria
 - Performance changes are validated on the short and long example YAMLs.
 
 Validation Notes
-- Pending.
+- Latest v1 observation: one global statistics chunk used 1 CPU efficiently
+  and finished in 3:47 for 2 init dates with 3.45 GB max RSS. The likely v1
+  wall-time advantage is coarse SLURM-level concurrency across many chunks, not
+  faster per-chunk computation. Step 14 should test whether v4 can recover that
+  speed by increasing in-process global-stat workers inside a larger single
+  allocation before considering a coarse multi-allocation mode.
 
 Known Risks
 - Higher worker counts can increase memory pressure, especially for
