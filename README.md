@@ -52,9 +52,9 @@ Supported ML models are GenCast, AIFS, Prithvi. Supported reanalysis/climatology
 
 ## Comparison between original code and v4
 
-Below is an example run comparing long and short experiments for the original "v1" code and the newest "v4" code. There are slight timing differences between each run, due to SLURM scheduling. The newest code runs only slightly slower than the old code, while achieving a much more readable/maintainable code structure and using significantly less compute. Future work is planned to improve the speed of the v4 code.
+Below is an example run comparing long and short experiments for the original "v1" code and the newest "v4" code. There are slight timing differences between each run, due to SLURM scheduling. This experiment was run on 2026-07-09. In this run, v4 was faster for both example workflows while keeping the cleaner single-job pipeline structure.
 
 | Experiment | v1 elapsed | v4 elapsed | v4-v1 | v1 files | v4 files |
 | :---: | :---: | :---: | :---: | :---: | :---: |
-| short | 00:16:05 | 00:17:02 | +00:00:57 | OK | OK |
-| long | 00:31:12 | 00:32:06 | +00:00:54 | OK | OK |
+| short | 00:16:04 | 00:04:30 | -00:11:34 | OK | OK |
+| long | 00:35:12 | 00:28:33 | -00:06:39 | OK | OK |
