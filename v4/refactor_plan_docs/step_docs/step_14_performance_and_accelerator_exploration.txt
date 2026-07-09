@@ -1,0 +1,90 @@
+Step 14: Improve v4 Performance And Optional Accelerator Usage
+
+Status
+- Planned.
+
+Reason For This Step
+- Step 12 timing tests showed v4 is structurally cleaner and more stable, but
+  it is not yet faster than the original v1 multi-job workflow.
+- v1 can win wall-clock time by fanning work out across many SLURM jobs, while
+  v4 currently limits execution to one allocation and local worker processes.
+- Compute is acceptable to spend when it produces a meaningful speedup, but
+  stability and output equivalence should remain the default priority.
+
+Primary Goals
+- Identify the main v4 runtime bottlenecks by phase and branch.
+- Improve CPU utilization without returning to the full v1 dependency-chain
+  model.
+- Add performance controls that are explicit in YAML and safe by default.
+- Explore optional GPU acceleration only for measured hotspots with a CPU
+  fallback.
+- Preserve scientific output equivalence with v1/v4 Step 12 validation outputs.
+
+Planned Work
+- Profile source dataset creation, merge, regional statistics, and global
+  statistics using existing timing/resource summaries and additional targeted
+  measurements if needed.
+- Add separate regional/global statistics chunk-size controls if testing shows
+  they need different chunk sizes.
+- Test higher worker counts for forecast, analysis, regional stats, and global
+  stats where memory allows.
+- Keep climatology tuning conservative because previous tests showed memory and
+  stability sensitivity.
+- Explore optional regional/global branch concurrency behind a YAML setting,
+  while keeping serial execution as the default.
+- Investigate process startup and repeated dataset/config loading overhead in
+  chunk workers.
+- Investigate data loading, NetCDF/HDF5 I/O, and merge bottlenecks before
+  assuming more CPU workers will help.
+- Consider a coarse multi-allocation mode only if single-job tuning remains
+  slower and the added SLURM orchestration is justified.
+- Evaluate GPU acceleration candidates only after profiling identifies a
+  GPU-friendly hotspot.
+
+Out Of Scope For This Step
+- Do not change scientific formulas.
+- Do not make GPU acceleration mandatory.
+- Do not remove the stable CPU execution path.
+- Do not reintroduce the full v1 many-job dependency-chain design.
+- Do not make regional/global branch concurrency the default until filesystem
+  and memory behavior are validated.
+
+Potential YAML Controls
+- pipeline_chunk_size_stats_regional
+- pipeline_chunk_size_stats_global
+- pipeline_stats_branch_execution: serial | parallel
+- pipeline_max_concurrent_stats_branches
+- pipeline_accelerator: cpu | gpu
+- pipeline_gpu_stats: true | false
+- pipeline_gpu_regrid: true | false
+
+Planned Files To Inspect Or Touch
+- model/statistics_parallel_executor.py
+- model/dataset_parallel_executor.py
+- model/statistics_processor.py
+- model/dataset_processor.py
+- model/config_model.py
+- controller/cli_controller.py
+- example_yaml_files/*.yaml
+- refactor_plan_docs/v4_refactor_plan.txt
+- refactor_plan_docs/step_docs/step_14_performance_and_accelerator_exploration.txt
+
+Planned Acceptance Criteria
+- Step 14 identifies at least one measured v4 bottleneck and records the
+  evidence.
+- Any new performance controls are optional, YAML-driven, and documented.
+- Default behavior remains stable and CPU-only.
+- Output files remain scientifically equivalent to the Step 12 validation
+  baseline.
+- Performance changes are validated on the short and long example YAMLs.
+
+Validation Notes
+- Pending.
+
+Known Risks
+- Higher worker counts can increase memory pressure, especially for
+  climatology and global statistics.
+- Regional/global branch concurrency can increase shared-read pressure on the
+  same fcst/ana/clim datasets.
+- GPU acceleration may not help if the dominant bottleneck is I/O, process
+  startup, xarray overhead, or sparse regridding behavior.
