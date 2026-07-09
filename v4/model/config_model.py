@@ -47,6 +47,8 @@ class RuntimeSettings:
     pipeline_max_workers_stats_regional: int
     pipeline_max_workers_stats_global: int
     pipeline_chunk_size_stats: int
+    pipeline_chunk_size_stats_regional: int
+    pipeline_chunk_size_stats_global: int
 
 
 def _resolve_setting(cli_value, yaml_value, default_value):
@@ -144,6 +146,16 @@ def resolve_runtime_settings(args, config):
         getattr(args, 'pipeline_chunk_size_stats', None),
         config.get('pipeline_chunk_size_stats'),
         2,
+    )
+    pipeline_chunk_size_stats_regional = _resolve_setting(
+        getattr(args, 'pipeline_chunk_size_stats_regional', None),
+        config.get('pipeline_chunk_size_stats_regional'),
+        pipeline_chunk_size_stats,
+    )
+    pipeline_chunk_size_stats_global = _resolve_setting(
+        getattr(args, 'pipeline_chunk_size_stats_global', None),
+        config.get('pipeline_chunk_size_stats_global'),
+        pipeline_chunk_size_stats,
     )
 
     valid_stats_types = {'regional', 'global', 'both'}
@@ -269,6 +281,24 @@ def resolve_runtime_settings(args, config):
     if pipeline_chunk_size_stats < 1:
         raise ValueError('pipeline_chunk_size_stats must be >= 1')
 
+    try:
+        pipeline_chunk_size_stats_regional = int(
+            pipeline_chunk_size_stats_regional)
+    except (TypeError, ValueError):
+        raise ValueError(
+            'pipeline_chunk_size_stats_regional must be an integer')
+    if pipeline_chunk_size_stats_regional < 1:
+        raise ValueError('pipeline_chunk_size_stats_regional must be >= 1')
+
+    try:
+        pipeline_chunk_size_stats_global = int(
+            pipeline_chunk_size_stats_global)
+    except (TypeError, ValueError):
+        raise ValueError(
+            'pipeline_chunk_size_stats_global must be an integer')
+    if pipeline_chunk_size_stats_global < 1:
+        raise ValueError('pipeline_chunk_size_stats_global must be >= 1')
+
     return RuntimeSettings(
         stats_types=stats_types,
         pipeline_fail_policy=pipeline_fail_policy,
@@ -288,4 +318,7 @@ def resolve_runtime_settings(args, config):
             pipeline_max_workers_stats_regional),
         pipeline_max_workers_stats_global=pipeline_max_workers_stats_global,
         pipeline_chunk_size_stats=pipeline_chunk_size_stats,
+        pipeline_chunk_size_stats_regional=(
+            pipeline_chunk_size_stats_regional),
+        pipeline_chunk_size_stats_global=pipeline_chunk_size_stats_global,
     )

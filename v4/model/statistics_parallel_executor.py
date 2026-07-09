@@ -99,6 +99,15 @@ def _resolve_stats_workers(runtime_settings, num_chunks, stats_kind=None):
     return worker_limits
 
 
+def _resolve_stats_chunk_size(runtime_settings, stats_kind):
+    '''Return the init-date chunk size for one statistics branch.'''
+    if stats_kind == 'regional':
+        return runtime_settings.pipeline_chunk_size_stats_regional
+    if stats_kind == 'global':
+        return runtime_settings.pipeline_chunk_size_stats_global
+    return runtime_settings.pipeline_chunk_size_stats
+
+
 def _parse_chunk_dates(chunk_spec):
     '''Convert ChunkSpec selected date labels back to datetimes.'''
     return [
@@ -255,6 +264,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
         runtime_settings.pipeline_max_workers_stats_regional
         if stats_kind == 'regional'
         else runtime_settings.pipeline_max_workers_stats_global)
+    chunk_size = _resolve_stats_chunk_size(runtime_settings, stats_kind)
 
     if runtime_settings.pipeline_resume_mode == 'safe':
         is_valid, validation_error = _validate_existing_statistics_output(
@@ -278,7 +288,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
                 'slurm_cpu_cap': resolve_worker_limits(
                     configured_max_workers, len(init_dates)
                 )['slurm_cpu_cap'],
-                'chunk_size': runtime_settings.pipeline_chunk_size_stats,
+                'chunk_size': chunk_size,
                 'max_memory_mb': get_current_memory_mb(),
                 'output_path': expected_output_path,
                 'reuse_reason': 'valid existing statistics output',
@@ -292,7 +302,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
         init_dates,
         exclude_dates=[],
     ).build(
-        runtime_settings.pipeline_chunk_size_stats,
+        chunk_size,
         chunk_output_dir,
         f'stats_chunk_{stats_type}',
     )
@@ -330,7 +340,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
             'max_workers': 0,
             'configured_max_workers': configured_max_workers,
             'slurm_cpu_cap': worker_limits['slurm_cpu_cap'],
-            'chunk_size': runtime_settings.pipeline_chunk_size_stats,
+            'chunk_size': chunk_size,
             'max_memory_mb': get_current_memory_mb(),
             'output_path': expected_output_path,
         }
@@ -342,7 +352,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
     print(f'[INFO] {stats_kind} stats chunking plan: '
           f'{len(chunk_specs)} chunk(s), {len(required_chunks)} required, '
           f'{len(skipped_chunks)} skipped, '
-          f'chunk_size={runtime_settings.pipeline_chunk_size_stats}, '
+          f'chunk_size={chunk_size}, '
           f'max_workers={max_workers} '
           f'configured_workers={worker_limits["configured_workers"]} '
           f'slurm_cpu_cap={worker_limits["slurm_cpu_cap"]}')
@@ -480,7 +490,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
             'max_workers': max_workers,
             'configured_max_workers': configured_max_workers,
             'slurm_cpu_cap': worker_limits['slurm_cpu_cap'],
-            'chunk_size': runtime_settings.pipeline_chunk_size_stats,
+            'chunk_size': chunk_size,
             'max_memory_mb': branch_max_memory,
             'worker_cpu_seconds': worker_cpu_seconds,
             'output_path': expected_output_path,
@@ -502,7 +512,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
             'max_workers': max_workers,
             'configured_max_workers': configured_max_workers,
             'slurm_cpu_cap': worker_limits['slurm_cpu_cap'],
-            'chunk_size': runtime_settings.pipeline_chunk_size_stats,
+            'chunk_size': chunk_size,
             'max_memory_mb': branch_max_memory,
             'worker_cpu_seconds': worker_cpu_seconds,
             'output_path': expected_output_path,
@@ -522,7 +532,7 @@ def run_parallel_statistics_branch(stats_kind, processor_config,
         'max_workers': max_workers,
         'configured_max_workers': configured_max_workers,
         'slurm_cpu_cap': worker_limits['slurm_cpu_cap'],
-        'chunk_size': runtime_settings.pipeline_chunk_size_stats,
+        'chunk_size': chunk_size,
         'max_memory_mb': branch_max_memory,
         'worker_cpu_seconds': worker_cpu_seconds,
         'output_path': expected_output_path,

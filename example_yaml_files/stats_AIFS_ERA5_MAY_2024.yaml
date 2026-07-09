@@ -18,16 +18,18 @@ parameters:
 
     # run stats_regional (for corcmp) and/or stats_global (for syscmp)? [regional, global, both, or none]
     stats_types: both
-    # conservative defaults for single-job pipeline parallelism
+    # single-job pipeline parallelism defaults
     pipeline_max_workers_dataset_fcst: 8
     pipeline_max_workers_dataset_ana: 8
     pipeline_max_workers_dataset_clim: 2
     pipeline_max_workers_stats_regional: 8
-    pipeline_max_workers_stats_global: 8
+    pipeline_max_workers_stats_global: 16
     pipeline_chunk_size_fcst: 1
     pipeline_chunk_size_ana: 4
     pipeline_chunk_size_clim: 8
     pipeline_chunk_size_stats: 4
+    pipeline_chunk_size_stats_regional: 4
+    pipeline_chunk_size_stats_global: 2
     pipeline_log_level: normal
     # optional location(s) to search for pre-existing processed fcst/ana/clim datasets [comma-separated list]
     # dir_loc: [/path/to/loc1, /path/to/loc2]
@@ -88,5 +90,5 @@ parameters:
     partition: gpu_a100
     qos: alla100
     constraint: rome
-    pipeline_cpus: 10
+    pipeline_cpus: 16
     pipeline_mem: 64G

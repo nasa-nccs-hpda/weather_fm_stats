@@ -204,7 +204,12 @@ def parse_arguments():
     parser.add_argument('--pipeline_max_workers_stats_global', type=int,
                         help='Maximum worker processes for global statistics')
     parser.add_argument('--pipeline_chunk_size_stats', type=int,
-                        help='Statistics init-date chunk size')
+                        help=('Default statistics init-date chunk size '
+                              '(fallback for regional/global settings)'))
+    parser.add_argument('--pipeline_chunk_size_stats_regional', type=int,
+                        help='Regional statistics init-date chunk size')
+    parser.add_argument('--pipeline_chunk_size_stats_global', type=int,
+                        help='Global statistics init-date chunk size')
     # Manual/debug processing options
     process_group = parser.add_argument_group(
         'Manual/debug dataset options')
@@ -450,6 +455,8 @@ def print_runtime_contract(runtime_settings):
     print(f'  max_workers_stats_global={runtime_settings.pipeline_max_workers_stats_global}')
     print(f'  slurm_cpu_cap={get_slurm_cpu_cap()}')
     print(f'  chunk_size_stats={runtime_settings.pipeline_chunk_size_stats}')
+    print(f'  chunk_size_stats_regional={runtime_settings.pipeline_chunk_size_stats_regional}')
+    print(f'  chunk_size_stats_global={runtime_settings.pipeline_chunk_size_stats_global}')
 
 
 def print_pipeline_phase_header(phase_number, total_phases, title):
@@ -673,6 +680,10 @@ def _print_output_summary(branch_results, dataset_statuses=None,
                   f'skipped={branch_result["skipped_chunk_count"]} '
                   f'completed={branch_result.get("completed_chunk_count")} '
                   f'failed={branch_result.get("failed_chunk_count")}')
+            print(f'      chunk_size={_fmt_value(branch_result.get("chunk_size"))} '
+                  f'max_workers={_fmt_value(branch_result.get("max_workers"))} '
+                  f'configured_workers='
+                  f'{_fmt_value(branch_result.get("configured_max_workers"))}')
         if branch_result.get('output_path'):
             print(f'      output={branch_result["output_path"]} '
                   f'exists={branch_result.get("output_exists")}')
@@ -1056,8 +1067,12 @@ def run_pipeline_mode(args, single_fcst_mode):
         for branch_index, branch in enumerate(requested_branches, start=1):
             print(f'[INFO] Running {branch} statistics branch '
                   f'({branch_index}/{len(requested_branches)})...')
+            branch_chunk_size = (
+                runtime_settings.pipeline_chunk_size_stats_regional
+                if branch == 'regional'
+                else runtime_settings.pipeline_chunk_size_stats_global)
             print(f'[INFO] {branch} stats tuning: '
-                  f'chunk_size={runtime_settings.pipeline_chunk_size_stats}, '
+                  f'chunk_size={branch_chunk_size}, '
                   f'max_workers='
                   f'{runtime_settings.pipeline_max_workers_stats_regional if branch == "regional" else runtime_settings.pipeline_max_workers_stats_global}')
             branch_start = time.time()

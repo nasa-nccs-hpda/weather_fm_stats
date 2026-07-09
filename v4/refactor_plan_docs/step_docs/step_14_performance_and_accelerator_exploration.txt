@@ -1,7 +1,7 @@
 Step 14: Improve v4 Performance And Optional Accelerator Usage
 
 Status
-- Planned.
+- In progress.
 
 Reason For This Step
 - Step 12 timing tests showed v4 is structurally cleaner and more stable, but
@@ -33,11 +33,11 @@ Planned Work
   they need different chunk sizes.
 - Test higher worker counts for forecast, analysis, regional stats, and global
   stats where memory allows.
-- Initial global-stat experiment: test v4 with higher global concurrency, such
-  as pipeline_cpus=16, pipeline_mem=96G,
-  pipeline_max_workers_stats_global=16, and pipeline_chunk_size_stats=2, then
-  compare global wall time, max RSS, and output equivalence against the Step 12
-  baseline.
+- Initial global-stat experiment: test v4 with higher global concurrency while
+  keeping the same memory request, using pipeline_cpus=16, pipeline_mem=64G,
+  pipeline_max_workers_stats_global=16, and
+  pipeline_chunk_size_stats_global=2, then compare global wall time, max RSS,
+  and output equivalence against the Step 12 baseline.
 - Keep climatology tuning conservative because previous tests showed memory and
   stability sensitivity.
 - Explore optional regional/global branch concurrency behind a YAML setting,
@@ -95,6 +95,11 @@ Validation Notes
   faster per-chunk computation. Step 14 should test whether v4 can recover that
   speed by increasing in-process global-stat workers inside a larger single
   allocation before considering a coarse multi-allocation mode.
+- First implementation pass added branch-specific statistics chunk-size
+  controls while preserving pipeline_chunk_size_stats as the fallback. The
+  example YAMLs now request 16 CPUs and 64G memory, keep regional stats at 8
+  workers with 4-date chunks, and test global stats at 16 workers with 2-date
+  chunks. Dataset and climatology settings were left conservative.
 
 Known Risks
 - Higher worker counts can increase memory pressure, especially for
