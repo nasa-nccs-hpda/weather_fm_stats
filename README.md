@@ -31,7 +31,7 @@ chmod +x sbatch_stats_v4.run
 Format
 
 ```bash
-salloc --job-name=stats --time=8:00:00 --gres=gpu:1 --mem 200G -c 10 -p gpu_a100 --constraint="rome"
+salloc --job-name=stats --time=8:00:00 --gres=gpu:1 --mem 64G -c 10
 cd path/to/repo/v4
 chmod +x salloc_run_v4.sh
 ./salloc_stats_v4.run <yaml filename>
@@ -40,10 +40,10 @@ chmod +x salloc_run_v4.sh
 Example command:
 
 ```bash
-salloc --job-name=stats --time=8:00:00 --gres=gpu:1 --mem 200G -c 10 -p gpu_a100 --constraint="rome
+salloc --job-name=stats --time=8:00:00 --gres=gpu:1 --mem 64G -c 10
 cd $NOBACKUP/weather_fm_stats/v4
 chmod +x salloc_run_v4.sh
-srun --ntasks=1 --cpus-per-task=10 --gres=gpu:1 --mem=60G --time=1:00:00 --partition=gpu_a100 --constraint=rome ./salloc_stats_v4.run ../example_yaml_files/stats_AIFS_ERA5_MAY_2024.yaml
+./salloc_stats_v4.run ../example_yaml_files/stats_AIFS_ERA5_MAY_2024.yaml
 ```
 
 ## Supported models
@@ -53,6 +53,8 @@ Supported ML models are GenCast, AIFS, Prithvi. Supported reanalysis/climatology
 ## Comparison between v1 (original code) and v4
 
 | Experiment | v1 elapsed | v4 elapsed | v4-v1 | v1 files | v4 files |
-| --- | ---: | ---: | ---: | :---: | :---: |
+| :---: | :---: | :---: | :---: | :---: | :---: |
 | short | 00:16:05 | 00:17:02 | +00:00:57 | OK | OK |
 | long | 00:31:12 | 00:32:06 | +00:00:54 | OK | OK |
+
+The code runs in very similar times, while achieving a much more readable/maintainable code structure. Future work is planned to improve the runtime of the v4 code.
