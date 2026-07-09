@@ -144,7 +144,14 @@ def record_pipeline_phase(phase_metrics, phase_name):
 
 def parse_arguments():
     '''Parse command line arguments'''
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=(
+            'Run the v4 weather statistics pipeline. The normal v4 path is '
+            '--pipeline, usually launched by sbatch_stats_v4.run or '
+            'salloc_stats_v4.run. Lower-level dataset, statistics, and merge '
+            'flags are kept for debugging, recovery, and manual reruns.'
+        ),
+    )
     parser.add_argument('--config', default='stats.yaml',
                         help='Configuration file (default: stats.yaml)')
     parser.add_argument('--date', type=str,
@@ -155,7 +162,8 @@ def parse_arguments():
                         help=('Directory to save output files (for single '
                               'forecast mode)'))
     parser.add_argument('--pipeline', action='store_true',
-                        help='Run end-to-end single-job pipeline orchestration')
+                        help=('Run the end-to-end single-job v4 pipeline '
+                              '(normal production path)'))
     parser.add_argument('--stats_types',
                         choices=['regional', 'global', 'both'],
                         help='Pipeline stats branch selection')
@@ -176,7 +184,7 @@ def parse_arguments():
                         choices=['normal', 'verbose', 'debug'],
                         help='Pipeline logging verbosity')
     parser.add_argument('--pipeline_max_workers_dataset', type=int,
-                        help='Maximum worker processes for dataset build stage')
+                        help='Maximum worker processes for dataset build phase')
     parser.add_argument('--pipeline_max_workers_dataset_fcst', type=int,
                         help='Maximum worker processes for forecast dataset chunks')
     parser.add_argument('--pipeline_max_workers_dataset_ana', type=int,
@@ -197,34 +205,38 @@ def parse_arguments():
                         help='Maximum worker processes for global statistics')
     parser.add_argument('--pipeline_chunk_size_stats', type=int,
                         help='Statistics init-date chunk size')
-    # Processing options
-    process_group = parser.add_argument_group('Processing options')
+    # Manual/debug processing options
+    process_group = parser.add_argument_group(
+        'Manual/debug dataset options')
     process_group.add_argument('--check_only', action='store_true',
                                help='Only check for pre-existing datasets')
     process_group.add_argument('--fcst', action='store_true',
-                               help='Process only forecast dataset')
+                               help='Manually process only forecast dataset')
     process_group.add_argument('--ana', action='store_true',
-                               help='Process only analysis dataset')
+                               help='Manually process only analysis dataset')
     process_group.add_argument('--clim', action='store_true',
-                               help='Process only climatology dataset')
+                               help='Manually process only climatology dataset')
     process_group.add_argument('--process', action='store_true',
-                               help='Process all datasets (fcst, ana, clim)')
+                               help=('Manually process all datasets '
+                                     '(fcst, ana, clim)'))
     process_group.add_argument('--collection', dest='target_coll',
                                default=None,
                                help=('Process only specific collection (e.g., '
                                      'default, slices, aerosol)'))
     process_group.add_argument('--info_dir', default=None,
-                               help='Directory with date range and timestamp')
+                               help=('Run output directory name used for '
+                                     'manual/debug recovery commands'))
     process_group.add_argument('--date_start_idx', type=int,
                                help='Starting index for processing date range')
     process_group.add_argument('--date_end_idx', type=int,
                                help='Ending index for processing date range')
 
-    # Statistics options
-    stats_group = parser.add_argument_group('Statistics options')
+    # Manual/debug statistics options
+    stats_group = parser.add_argument_group(
+        'Manual/debug statistics options')
     stats_group.add_argument('--stats', choices=['reg', 'glo'],
-                             help=('Run statistics calculation type: reg or '
-                                   'glo'))
+                             help=('Manually run statistics calculation type: '
+                                   'reg or glo'))
     stats_group.add_argument('--init_start_idx', type=int,
                              help='Starting index for init dates (for chunks)')
     stats_group.add_argument('--init_end_idx', type=int,
@@ -234,19 +246,19 @@ def parse_arguments():
     stats_group.add_argument('--chunk_size', type=int, default=3,
                              help='Forecast chunk size (default: 3)')
 
-    # Merge options
-    merge_group = parser.add_argument_group('Merge options')
+    # Manual/debug merge options
+    merge_group = parser.add_argument_group('Manual/debug merge options')
     merge_group.add_argument('--merge_collections',
                              choices=['fcst', 'ana', 'clim'],
                              help=('Dataset to merge collections (fcst, ana, '
                              'or clim)'))
     merge_group.add_argument('--merge_forecast_chunks', action='store_true',
-                             help='Merge forecast chunk files')
+                             help='Manually merge forecast chunk files')
     merge_group.add_argument('--save_for_coll_merge', action='store_true',
                              help=('Save merged fcst file to tmp for '
                                    'collection merging'))
     merge_group.add_argument('--clean', action='store_true',
-                             help='Merge chunked statistics files')
+                             help='Manually merge chunked statistics files')
     merge_group.add_argument('--type', choices=['reg', 'glo'],
                              help='stats type to merge: reg or glo')
 

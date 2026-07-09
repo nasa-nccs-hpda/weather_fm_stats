@@ -6,7 +6,7 @@ Agentic development of scientific weather model stats. This code is designed to 
 
 **Note: Workflow runs exclusively on the Discover cluster. The workflow requires a .yaml file to describe what experiment configuration you'd like to run. See `example_yaml_files` for formatting.**
 
-You can either run this code from a Discover login node, or directly from an allocated A100 gpu node. See commands below for examples.
+The normal v4 workflow is a single SLURM job with in-process parallelism for dataset and statistics chunks. Use `sbatch_stats_v4.run` from a login node, or `salloc_stats_v4.run` inside an existing allocation. Lower-level Python flags are intended for debugging, merge recovery, and manual reruns.
 
 ### Option 1: from login node
 
@@ -31,18 +31,18 @@ chmod +x sbatch_stats_v4.run
 Format
 
 ```bash
-salloc --job-name=stats --time=8:00:00 --gres=gpu:1 --mem 64G -c 10
+salloc --job-name=stats --time=8:00:00 --gres=gpu:1 --mem=64G --cpus-per-task=10
 cd path/to/repo/v4
-chmod +x salloc_run_v4.sh
+chmod +x salloc_stats_v4.run
 ./salloc_stats_v4.run <yaml filename>
 ```
 
 Example command:
 
 ```bash
-salloc --job-name=stats --time=8:00:00 --gres=gpu:1 --mem 64G -c 10
+salloc --job-name=stats --time=8:00:00 --gres=gpu:1 --mem=64G --cpus-per-task=10 --partition=gpu_a100 --constraint=rome
 cd $NOBACKUP/weather_fm_stats/v4
-chmod +x salloc_run_v4.sh
+chmod +x salloc_stats_v4.run
 ./salloc_stats_v4.run ../example_yaml_files/stats_AIFS_ERA5_MAY_2024.yaml
 ```
 

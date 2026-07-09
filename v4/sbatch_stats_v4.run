@@ -1,5 +1,9 @@
 #!/bin/csh -f
 
+# v4 login-node entrypoint.
+# Submits one SLURM job that runs the full Python pipeline inside one
+# allocation. Dataset/statistics chunk parallelism happens inside that job.
+
 source /usr/share/lmod/lmod/init/csh
 module load python/GEOSpyD
 
@@ -101,7 +105,7 @@ endif
 
 echo "Stats types to run: $stats_types (regional=$run_regional, global=$run_global)"
 
-# Build one SLURM script for the entire workflow
+# Build one SLURM script for the entire v4 workflow.
 set pipeline_script = "${job_dir}/stats_pipeline.j"
 printf '#\041/bin/csh -e\n' > $pipeline_script
 echo "#SBATCH --job-name=stats_v4_pipeline" >> $pipeline_script
@@ -131,7 +135,7 @@ if ($generate_only) then
     echo ""
     echo "Generate-only mode enabled."
     echo "Created single pipeline job script: $pipeline_script"
-    echo "No jobs were submitted. Re-run without --generate-only to submit."
+    echo "No jobs were submitted. Re-run without --generate-only to submit one v4 pipeline job."
     exit 0
 endif
 
@@ -143,7 +147,7 @@ endif
 
 echo ""
 echo "Submitted single v4 pipeline job successfully."
+echo "No external dependency chain or job array was created."
 echo "Job ID: $pipeline_job_id"
 echo "Job script: $pipeline_script"
 echo "Log file: ${log_dir}/stats_v4_pipeline.${pipeline_job_id}.out"
-

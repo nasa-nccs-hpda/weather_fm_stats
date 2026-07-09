@@ -1,5 +1,9 @@
 #!/bin/csh -f
 
+# v4 allocation-node entrypoint.
+# Runs the full Python pipeline directly inside the current allocation.
+# Dataset/statistics chunk parallelism happens inside this one process tree.
+
 source /usr/share/lmod/lmod/init/csh
 module load python/GEOSpyD
 
@@ -101,7 +105,7 @@ endif
 
 echo "Stats types to run: $stats_types (regional=$run_regional, global=$run_global)"
 
-# Build one direct execution script for the allocated node
+# Build one direct execution script for the allocated node.
 set pipeline_script = "${job_dir}/stats_pipeline_direct.j"
 printf '#\041/bin/csh -e\n' > $pipeline_script
 echo "source /usr/share/lmod/lmod/init/csh" >> $pipeline_script
@@ -118,12 +122,13 @@ if ($generate_only) then
     echo ""
     echo "Generate-only mode enabled."
     echo "Created direct pipeline script: $pipeline_script"
-    echo "No workflow was executed. Re-run without --generate-only to execute."
+    echo "No workflow was executed. Re-run without --generate-only to execute one v4 pipeline."
     exit 0
 endif
 
 echo ""
 echo "Starting single v4 pipeline directly on allocated node."
+echo "No external dependency chain or job array will be created."
 echo "Pipeline script: $pipeline_script"
 set direct_log = ${log_dir}/stats_v4_pipeline_direct.${timestamp}.out
 echo "Log file: $direct_log"

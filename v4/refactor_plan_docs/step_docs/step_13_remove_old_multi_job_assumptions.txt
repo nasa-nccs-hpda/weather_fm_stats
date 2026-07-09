@@ -1,7 +1,7 @@
 Step 13: Remove Old Multi-Job Assumptions
 
 Status
-- Planned.
+- Completed.
 
 Reason For This Step
 - v4 now has a single-job pipeline that builds source datasets and then runs
@@ -65,7 +65,17 @@ Planned Acceptance Criteria
 - Step 12 comparison tooling remains outside the normal v4 workflow.
 
 Validation Notes
-- Pending.
+- Updated README workflow guidance so v4 is described as one SLURM job with
+  in-process parallelism.
+- Fixed the README allocation-node command to use `salloc_stats_v4.run`.
+- Updated `sbatch_stats_v4.run` and `salloc_stats_v4.run` comments/output to
+  state that no external dependency chain or job array is created.
+- Updated CLI help to identify `--pipeline` as the normal production path and
+  dataset/statistics/merge flags as manual/debug recovery tools.
+- Corrected stale v3 docstrings in small v4 package/controller/model boundary
+  files.
+- Syntax validation passed for touched Python modules with `python -m
+  py_compile`.
 
 Known Risks
 - Removing too much could make manual recovery harder after partial outputs or
