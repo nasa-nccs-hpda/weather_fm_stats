@@ -1,0 +1,90 @@
+# stats.yaml
+
+parameters:
+  # length and dates form inclusive ranges
+    fcst_length: 7 # days (whole numbers only)
+    fcst_interval: 12 # hours (whole numbers only)
+    fcst_spacing: 1 # days between forecasts beginning on start_date
+    start_date: 20240501 # YYYYMMDD
+    end_date: 20240505 # YYYYMMDD
+    # exclude_dates: [20241205] # [comma-separated list of dates to exclude as YYYYMMDD]
+
+  # stats options [comma-separated lists]
+    levels: [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50] # pressure levels hPa
+    3d_vars_default: [T] # chosen from among [H, Q, T, U, V, W, Z]
+    2d_vars_default: # chosen from among [P, PS]
+    2d_vars_slices: [T2m]  # chosen from among [Q2m, T2m, U10m, V10m, D2m]
+    regions: [GLO, NHE, TRO, SHE] # chosen from among [GLO, NHE, TRO, SHE, NWQ, NEQ, SWQ, SEQ, NAM, EUR, NPO, SPO, XPO, CUS, LND, NHL, TRL, SHL]
+
+    # run stats_regional (for corcmp) and/or stats_global (for syscmp)? [regional, global, both, or none]
+    stats_types: both
+    # single-job pipeline parallelism defaults
+    pipeline_max_workers_dataset_fcst: 8
+    pipeline_max_workers_dataset_ana: 8
+    pipeline_max_workers_dataset_clim: 2
+    pipeline_max_workers_stats_regional: 8
+    pipeline_max_workers_stats_global: 16
+    pipeline_chunk_size_fcst: 1
+    pipeline_chunk_size_ana: 4
+    pipeline_chunk_size_clim: 8
+    pipeline_chunk_size_stats: 4
+    pipeline_chunk_size_stats_regional: 4
+    pipeline_chunk_size_stats_global: 2
+    pipeline_log_level: normal
+    # optional location(s) to search for pre-existing processed fcst/ana/clim datasets [comma-separated list]
+    # dir_loc: [/path/to/loc1, /path/to/loc2]
+
+  # fcst/ana/clim directories/templates should reference initialization and valid dates/times using tags
+  # acceptable tags are: init and valid _YYYY, _MM, _DD, _HH, _YYYYMMDD, _YYYYMMDDHH
+  # shifts in hours can be included like: {init_YYYYMMDD,shift=-3h}
+  # templates for slices and aerosols are optional; if not present or left blank will be assumed to be the same as default
+  # expver and verify are scorecard tags, e.g., gmao or ecmwf or era5 or self; only used with stats_regional which writes the scorecard input files
+
+    # GenCast forecast uses one input directory and templated default files.
+    fcst_model: GenCast
+    fcst_input_dir: /discover/nobackup/projects/QEFM/data/rollout_outputs/FMGenCast
+    fcst_input_template_default: Y{init_YYYY}/M{init_MM}/D{init_DD}/*initial*{valid_YYYY}-{valid_MM}-{valid_DD}T{valid_HH}*.nc, Y{init_YYYY}/M{init_MM}/D{init_DD}/*{valid_YYYY}-{valid_MM}-{valid_DD}T{valid_HH}*ens-mean.nc
+    fcst_input_template_slices:
+
+    # ERA5 analysis has separate 2D/3D templates.
+    ana_model: ERA5
+    ana_input_dir: /css/era5
+    ana_input_template_default: pressure_level_hourly/Y{valid_YYYY}/M{valid_MM}/era5_pl-allvar.{valid_YYYYMMDD}_{valid_HH}z.nc4
+    ana_input_template_slices: surface_hourly/inst/Y{valid_YYYY}/M{valid_MM}/era5_surface-inst_allvar_{valid_YYYYMMDD}_{valid_HH}z.nc
+
+    # ERA5 climatology - no separate directories needed
+    clim_model: ERA5
+    clim_input_dir: /discover/nobackup/projects/gmao/geos_itv/mefrazer/METplus/clim/trimmed
+    clim_input_template_default: era5_mnth.mrg1_avg.1440x0721.Y1985-2014.T{valid_HH}z.nc4
+    expver: GenCast
+    verify: ecmwf
+
+  # output grid (fcst/ana/clim will be all be re-gridded to this)
+    Nlat: 91        # number of lat points
+    Nlon: 144       # number of lon points
+    delta_lat: 2.0  # latitude increment
+    delta_lon: 2.5  # longitude increment
+
+  # aliases (add to these case-insensitive lists if your fcst/ana/clim variables have names that aren't already listed)
+    H_alias: [h, hght, hgtprs, hgt, gh]
+    Q_alias: [q, qv, sphu, spfh]
+    T_alias: [t, tmpu, tmpprs, tmp]
+    U_alias: [u, uwnd, ugrdprs, ugrd]
+    V_alias: [v, vwnd, vgrdprs, vgrd]
+    W_alias: [w, omega, wwind, vvel]
+    Z_alias: [z]
+    P_alias: [slp, slprs, prmsl, msl]
+    T2m_alias: [t2m, t2, tmp_2m, 2t]
+    Q2m_alias: [q2m, q2, qv2m, qv2, spfh_2m]
+    U10m_alias: [u10m, u10, ugrd_10m, 10u]
+    V10m_alias: [v10m, v10, vgrd_10m, 10v]
+    D2m_alias: [d2m, d2, dpt_2m, dwpt, td, t2mdew, 2d]
+    PS_alias: [ps, sp, pres_sfc]
+
+  # SBATCH parameters (only used by stats.run, not stats.py)
+    account: ilab
+    partition: gpu_a100
+    qos: alla100
+    constraint: rome
+    pipeline_cpus: 16
+    pipeline_mem: 64G
