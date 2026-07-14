@@ -1,12 +1,12 @@
 # Repository description
 
-Agentic development of scientific weather model stats. This code is designed to create forecast/reanalysis/climatology datasets from raw netCDF files, then use those three datasets to create global/regional stats files for those datasets. The goal is to create fast, modular code that can support many different models, pressure levels, variables, dates, and so on.
+Working repo for creating weather model stats. This code is designed to create forecast/reanalysis/climatology datasets from raw netCDF files, then use those three datasets to create global/regional stats files for those datasets. The goal is to create fast, modular code that can support many different models, pressure levels, variables, dates, and so on.
 
 ## Workflow
 
 **Note: Workflow runs exclusively on the Discover cluster. The workflow requires a .yaml file to describe what experiment configuration you'd like to run. See `example_yaml_files` for formatting.**
 
-The normal workflow is a single SLURM job with in-process parallelism for dataset and statistics chunks. Use `sbatch_stats.run` from a login node, or `salloc_stats.run` inside an existing allocation. Lower-level Python flags are intended for debugging, merge recovery, and manual reruns.
+The normal workflow is a single SLURM job with in-process parallelism for dataset and statistics chunks. Use `sbatch_stats.run` from a login node. Lower-level Python flags are intended for debugging, merge recovery, and manual reruns.
 
 Pipeline outputs are written to `outputs/` at the repository root.
 
@@ -30,7 +30,9 @@ chmod +x sbatch_stats.run
 
 ## Supported models
 
-Supported ML models are GenCast, AIFS, Prithvi. Supported reanalysis/climatology models are GEOSFP, MERRA2, and ERA5. Note: different models will have different file globbing/date organization patterns. To have these loaded correctly, look at the example .yaml files for help.
+Supported ML models are GenCast, AIFS, Prithvi. Supported reanalysis/climatology models are GEOSFP, MERRA2, and ERA5.
+
+**Note: different models will have different file globbing/date organization patterns. To have these loaded correctly, look at the example .yaml files for help.**
 
 Variable availability differs by model and by the chosen analysis/climatology pair. The table below describes the currently validated example YAMLs. The short examples use only `T` and `T2m`; the long examples use the broadest supported variable set for that model combination.
 
