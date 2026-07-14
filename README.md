@@ -10,9 +10,9 @@ The normal v4 workflow is a single SLURM job with in-process parallelism for dat
 
 Currently, v4 outputs go to v4/outputs. In the future this will be changed to a single central location, after the versions are cleaned up.
 
-### Option 1: from login node
+### Running the workflow
 
-Format:
+**Format:**
 
 ```bash
 cd path/to/repo/v4
@@ -20,32 +20,12 @@ chmod +x sbatch_stats_v4.run
 ./sbatch_stats_v4.run <yaml_filename>
 ```
 
-Example command:
+**Example command:**
 
 ```bash
 cd $NOBACKUP/weather_fm_stats/v4
 chmod +x sbatch_stats_v4.run
 ./sbatch_stats_v4.run ../example_yaml_files/short_exp/AIFS_ERA5_ERA5_MAY_2024.yaml
-```
-
-### Option 2: from compute node
-
-Format
-
-```bash
-salloc --job-name=stats --mem=64G --time=2:00:00 --partition=gpu_a100 --constraint=rome --ntasks-per-node=1 --cpus-per-task=10
-cd path/to/repo/v4
-chmod +x salloc_stats_v4.run
-./salloc_stats_v4.run <yaml filename>
-```
-
-Example command:
-
-```bash
-salloc --job-name=stats --mem=64G --time=2:00:00 --partition=gpu_a100 --constraint=rome --ntasks-per-node=1 --cpus-per-task=10
-cd $NOBACKUP/weather_fm_stats/v4
-chmod +x salloc_stats_v4.run
-./salloc_stats_v4.run ../example_yaml_files/short_exp/AIFS_ERA5_ERA5_MAY_2024.yaml
 ```
 
 ## Supported models
@@ -74,7 +54,7 @@ Other common configuration options include `regions`, `stats_types`, `dir_loc` f
 
 Below is an example run comparing long and short experiments for the original "v1" code and the newest "v4" code. There are slight timing differences between each run, due to SLURM scheduling. This experiment was run on 2026-07-09. In this run, v4 was faster for both example workflows while keeping the cleaner single-job pipeline structure.
 
-| Experiment | v1 elapsed | v4 elapsed | v4-v1 | v1 files | v4 files |
-| :---: | :---: | :---: | :---: | :---: | :---: |
-| short | 00:10:40 | 00:04:00 | -00:06:40 | OK | OK |
-| long | 00:27:11 | 00:19:01 | -00:08:10 | OK | OK |
+| Experiment | v1 elapsed | v4 elapsed | v4-v1
+| :---: | :---: | :---: | :---:
+| short | 00:10:40 | 00:04:00 | -00:06:40
+| long | 00:27:11 | 00:19:01 | -00:08:10
