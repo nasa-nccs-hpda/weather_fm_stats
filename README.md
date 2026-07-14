@@ -23,7 +23,7 @@ Example command:
 ```bash
 cd $NOBACKUP/weather_fm_stats/v4
 chmod +x sbatch_stats_v4.run
-./sbatch_stats_v4.run ../example_yaml_files/stats_AIFS_ERA5_MAY_2024.yaml
+./sbatch_stats_v4.run ../example_yaml_files/short_exp/AIFS_ERA5_ERA5_MAY_2024.yaml
 ```
 
 ### Option 2: from compute node
@@ -31,7 +31,7 @@ chmod +x sbatch_stats_v4.run
 Format
 
 ```bash
-salloc --job-name=stats --mem=64G --time=2:00:00 --partition=gpu_a100 --constraint=rome --ntasks-per-node=1 --cpus-per-task=10 
+salloc --job-name=stats --mem=64G --time=2:00:00 --partition=gpu_a100 --constraint=rome --ntasks-per-node=1 --cpus-per-task=10
 cd path/to/repo/v4
 chmod +x salloc_stats_v4.run
 ./salloc_stats_v4.run <yaml filename>
@@ -40,15 +40,15 @@ chmod +x salloc_stats_v4.run
 Example command:
 
 ```bash
-salloc --job-name=stats --mem=64G --time=2:00:00 --partition=gpu_a100 --constraint=rome --ntasks-per-node=1 --cpus-per-task=10 
+salloc --job-name=stats --mem=64G --time=2:00:00 --partition=gpu_a100 --constraint=rome --ntasks-per-node=1 --cpus-per-task=10
 cd $NOBACKUP/weather_fm_stats/v4
 chmod +x salloc_stats_v4.run
-./salloc_stats_v4.run ../example_yaml_files/stats_AIFS_ERA5_MAY_2024.yaml
+./salloc_stats_v4.run ../example_yaml_files/short_exp/AIFS_ERA5_ERA5_MAY_2024.yaml
 ```
 
 ## Supported models
 
-Supported ML models are GenCast, AIFS, Prithvi. Supported reanalysis/climatology models are GEOSFP, MERRA2, and ERA5. Note: different models will have different file globbing/date organization patterns. To have these loaded correctly, look at the example .yaml files for help. 
+Supported ML models are GenCast, AIFS, Prithvi. Supported reanalysis/climatology models are GEOSFP, MERRA2, and ERA5. Note: different models will have different file globbing/date organization patterns. To have these loaded correctly, look at the example .yaml files for help.
 
 ## Comparison between original code and v4
 
