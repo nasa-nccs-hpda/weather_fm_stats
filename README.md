@@ -32,7 +32,13 @@ chmod +x sbatch_stats_v4.run
 
 Supported ML models are GenCast, AIFS, Prithvi. Supported reanalysis/climatology models are GEOSFP, MERRA2, and ERA5. Note: different models will have different file globbing/date organization patterns. To have these loaded correctly, look at the example .yaml files for help.
 
-Variable availability can also differ by forecast model. For example, the GenCast example files provide `H`, `QV`, `T`, `U`, `V`, `SLP`, `T2M`, `U10M`, and `V10M`, but not `D2M`, `PS`, or `Q2M`; the long GenCast example therefore omits `D2m` and `PS`, uses `P` from `SLP`, and maps requested `Z` through the available `H` field.
+Variable availability differs by model and by the chosen analysis/climatology pair. The table below describes the currently validated example YAMLs. The short examples use only `T` and `T2m`; the long examples use the broadest supported variable set for that model combination.
+
+| Example model combination | Long-example supported variables | Long-example unsupported or omitted variables | Notes |
+| :--- | :--- | :--- | :--- |
+| `AIFS` / `ERA5` / `ERA5` | `Q`, `T`, `U`, `V`, `Z`, `T2m`, `U10m`, `V10m`, `D2m`, `P`, `PS` | None currently omitted from the shared long variable set | Baseline example for the full variable set. |
+| `GenCast` / `ERA5` / `ERA5` | `Q`, `T`, `U`, `V`, `Z`, `T2m`, `U10m`, `V10m`, `P` | `D2m`, `PS` | GenCast files provide `H`, `QV`, `T`, `U`, `V`, `SLP`, `T2M`, `U10M`, and `V10M`. The YAML maps `Z` through `H`, maps `Q` through `QV`, and maps `P` through `SLP`. |
+| `Prithvi` / `MERRA2` / `MERRA2` | `Q`, `T`, `U`, `V`, `Z`, `T2m`, `U10m`, `V10m`, `PS` | `P`, `D2m` | Current MERRA2 analysis files do not expose `P`/`SLP`; current MERRA2 climatology slice files do not expose `D2m`. |
 
 ## Modifying YAML Files
 

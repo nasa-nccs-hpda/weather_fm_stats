@@ -13,7 +13,7 @@ parameters:
     levels: [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50] # pressure levels hPa
     3d_vars_default: [Q, T, U, V, Z] # chosen from among [H, Q, T, U, V, W, Z]
     2d_vars_default: # chosen from among [P, PS]
-    2d_vars_slices: [T2m, U10m, V10m, D2m, P, PS]  # chosen from among [Q2m, T2m, U10m, V10m, D2m]
+    2d_vars_slices: [T2m, U10m, V10m, PS]  # chosen from among [Q2m, T2m, U10m, V10m, D2m, P, PS]
     regions: [GLO, NHE, TRO, SHE] # chosen from among [GLO, NHE, TRO, SHE, NWQ, NEQ, SWQ, SEQ, NAM, EUR, NPO, SPO, XPO, CUS, LND, NHL, TRL, SHL]
 
     # run stats_regional (for corcmp) and/or stats_global (for syscmp)? [regional, global, both, or none]
