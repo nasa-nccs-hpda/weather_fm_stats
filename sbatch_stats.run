@@ -165,12 +165,12 @@ echo "Press Ctrl+C to stop watching; the SLURM job will continue."
 echo ""
 
 set follow_script = "${job_dir}/follow_pipeline_log.sh"
-printf '#!/usr/bin/env bash\n' > $follow_script
+printf '#\041/usr/bin/env bash\n' > $follow_script
 echo 'set -u' >> $follow_script
 echo 'log_file="$1"' >> $follow_script
 echo 'job_id="$2"' >> $follow_script
 echo 'echo "Waiting for log file to appear..."' >> $follow_script
-echo 'while [[ ! -f "$log_file" ]]; do' >> $follow_script
+printf 'while [[ \041 -f "$log_file" ]]; do\n' >> $follow_script
 echo '    if [[ -z "$(squeue -j "$job_id" -h 2>/dev/null)" ]]; then' >> $follow_script
 echo '        echo "Job $job_id finished before the log file appeared."' >> $follow_script
 echo '        exit 0' >> $follow_script
@@ -179,7 +179,7 @@ echo '    sleep 2' >> $follow_script
 echo 'done' >> $follow_script
 echo 'echo "Log file is ready."' >> $follow_script
 echo 'tail -n +1 -F "$log_file" &' >> $follow_script
-echo 'tail_pid=$!' >> $follow_script
+printf 'tail_pid=$\041\n' >> $follow_script
 echo 'while [[ -n "$(squeue -j "$job_id" -h 2>/dev/null)" ]]; do' >> $follow_script
 echo '    sleep 10' >> $follow_script
 echo 'done' >> $follow_script
