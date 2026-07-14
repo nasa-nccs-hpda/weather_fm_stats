@@ -6,26 +6,26 @@ Agentic development of scientific weather model stats. This code is designed to 
 
 **Note: Workflow runs exclusively on the Discover cluster. The workflow requires a .yaml file to describe what experiment configuration you'd like to run. See `example_yaml_files` for formatting.**
 
-The normal v4 workflow is a single SLURM job with in-process parallelism for dataset and statistics chunks. Use `sbatch_stats_v4.run` from a login node, or `salloc_stats_v4.run` inside an existing allocation. Lower-level Python flags are intended for debugging, merge recovery, and manual reruns.
+The normal workflow is a single SLURM job with in-process parallelism for dataset and statistics chunks. Use `sbatch_stats.run` from a login node, or `salloc_stats.run` inside an existing allocation. Lower-level Python flags are intended for debugging, merge recovery, and manual reruns.
 
-Currently, v4 outputs go to v4/outputs. In the future this will be changed to a single central location, after the versions are cleaned up.
+Pipeline outputs are written to `outputs/` at the repository root.
 
 ### Running the workflow
 
 **Format:**
 
 ```bash
-cd path/to/repo/v4
-chmod +x sbatch_stats_v4.run
-./sbatch_stats_v4.run <yaml_filename>
+cd path/to/repo
+chmod +x sbatch_stats.run
+./sbatch_stats.run <yaml_filename>
 ```
 
 **Example command:**
 
 ```bash
-cd $NOBACKUP/weather_fm_stats/v4
-chmod +x sbatch_stats_v4.run
-./sbatch_stats_v4.run ../example_yaml_files/short_exp/AIFS_ERA5_ERA5_MAY_2024.yaml
+cd $NOBACKUP/weather_fm_stats
+chmod +x sbatch_stats.run
+./sbatch_stats.run example_yaml_files/short_exp/AIFS_ERA5_ERA5_MAY_2024.yaml
 ```
 
 ## Supported models
@@ -56,11 +56,11 @@ Other common configuration options include `regions`, `stats_types`, `dir_loc` f
 
 **Some model/variable/date combinations may fail because files are missing, variables are unavailable, pressure levels do not match, or a requested variable cannot be calculated from available dependencies. The pipeline logs include validation errors that identify what went wrong, such as missing files, missing variables, missing pressure levels, or failed calculated-variable dependencies.**
 
-## Comparison between original code and v4
+## Comparison between original code and current pipeline
 
-Below is an example run comparing long and short experiments for the original "v1" code and the newest "v4" code. There are slight timing differences between each run, due to SLURM scheduling. This experiment was run on 2026-07-09. In this run, v4 was faster for both example workflows while keeping the cleaner single-job pipeline structure.
+Below is an example run comparing long and short experiments for the archived original `v1` code and the current single-job pipeline. There are slight timing differences between each run, due to SLURM scheduling. This experiment was run on 2026-07-09. In this run, the current pipeline was faster for both example workflows while keeping the cleaner single-job structure.
 
-| Experiment | v1 elapsed | v4 elapsed | v4-v1
+| Experiment | v1 elapsed | current elapsed | current-v1
 | :---: | :---: | :---: | :---:
 | short | 00:10:40 | 00:04:00 | -00:06:40
 | long | 00:27:11 | 00:19:01 | -00:08:10

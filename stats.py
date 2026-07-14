@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env python3
-'''Entry point for the v4 MVC-organized stats workflow.'''
+'''Entry point for the MVC-organized stats workflow.'''
 
 from controller.cli_controller import main
 

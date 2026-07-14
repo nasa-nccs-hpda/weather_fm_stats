@@ -2,15 +2,15 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-short_yaml="${repo_dir}/example_yaml_files/stats_AIFS_ERA5_MAY_2024_T_T2m_5day.yaml"
-long_yaml="${repo_dir}/example_yaml_files/stats_AIFS_ERA5_MAY_2024.yaml"
+short_yaml="${repo_dir}/example_yaml_files/short_exp/AIFS_ERA5_ERA5_MAY_2024.yaml"
+long_yaml="${repo_dir}/example_yaml_files/long_exp/AIFS_ERA5_ERA5_MAY_2024.yaml"
 poll_seconds="${STEP12_POLL_SECONDS:-30}"
 
 declare -a result_labels=()
 declare -a result_v1_seconds=()
-declare -a result_v4_seconds=()
+declare -a result_current_seconds=()
 declare -a result_v1_outputs=()
-declare -a result_v4_outputs=()
+declare -a result_current_outputs=()
 missing_output_count=0
 
 require_file() {
@@ -47,7 +47,14 @@ yaml_value() {
 expected_output_paths() {
     local version="$1"
     local yaml_path="$2"
-    local output_root="${repo_dir}/${version}/outputs"
+    local output_root
+    if [[ "$version" == "current" ]]; then
+        output_root="${repo_dir}/outputs"
+    elif [[ "$version" == "v1" ]]; then
+        output_root="${repo_dir}/archives/legacy_versions/v1/outputs"
+    else
+        output_root="${repo_dir}/${version}/outputs"
+    fi
 
     local fcst_model
     local ana_model
@@ -158,39 +165,39 @@ jobs_running() {
 wait_for_experiment_jobs() {
     local label="$1"
     local v1_start="$2"
-    local v4_start="$3"
+    local current_start="$3"
     local v1_jobs="$4"
-    local v4_jobs="$5"
+    local current_jobs="$5"
     local v1_count="$6"
-    local v4_count="$7"
+    local current_count="$7"
 
     echo "Waiting for $label v1 jobs to finish (${v1_count} job(s)): $v1_jobs"
-    echo "Waiting for $label v4 jobs to finish (${v4_count} job(s)): $v4_jobs"
+    echo "Waiting for $label current jobs to finish (${current_count} job(s)): $current_jobs"
 
     local v1_done=0
-    local v4_done=0
+    local current_done=0
     local v1_end=0
-    local v4_end=0
+    local current_end=0
 
-    while ((v1_done == 0 || v4_done == 0)); do
+    while ((v1_done == 0 || current_done == 0)); do
         if ((v1_done == 0)) && ! jobs_running "$v1_jobs"; then
             v1_done=1
             v1_end="$(date +%s)"
             echo "$label v1 jobs finished."
         fi
-        if ((v4_done == 0)) && ! jobs_running "$v4_jobs"; then
-            v4_done=1
-            v4_end="$(date +%s)"
-            echo "$label v4 jobs finished."
+        if ((current_done == 0)) && ! jobs_running "$current_jobs"; then
+            current_done=1
+            current_end="$(date +%s)"
+            echo "$label current jobs finished."
         fi
-        if ((v1_done == 0 || v4_done == 0)); then
+        if ((v1_done == 0 || current_done == 0)); then
             sleep "$poll_seconds"
         fi
     done
 
     result_labels+=("$label")
     result_v1_seconds+=("$((v1_end - v1_start))")
-    result_v4_seconds+=("$((v4_end - v4_start))")
+    result_current_seconds+=("$((current_end - current_start))")
 }
 
 submit_workflow() {
@@ -201,16 +208,16 @@ submit_workflow() {
 
     echo "Submitting $version workflow for $label"
     if [[ "$version" == "v1" ]]; then
-        chmod +x "${repo_dir}/v1/stats_trimmed.run"
+        chmod +x "${repo_dir}/archives/legacy_versions/v1/stats_trimmed.run"
         (
-            cd "${repo_dir}/v1"
+            cd "${repo_dir}/archives/legacy_versions/v1"
             ./stats_trimmed.run "$yaml_path"
         ) | tee "$submit_log"
-    elif [[ "$version" == "v4" ]]; then
-        chmod +x "${repo_dir}/v4/sbatch_stats_v4.run"
+    elif [[ "$version" == "current" ]]; then
+        chmod +x "${repo_dir}/sbatch_stats.run"
         (
-            cd "${repo_dir}/v4"
-            ./sbatch_stats_v4.run "$yaml_path"
+            cd "${repo_dir}"
+            FOLLOW_LOG=0 ./sbatch_stats.run "$yaml_path"
         ) | tee "$submit_log"
     else
         echo "Error: unsupported workflow version: $version" >&2
@@ -227,7 +234,7 @@ run_side_by_side_experiment() {
     local stamp
     stamp="$(date +%Y%m%d_%H%M%S)"
     local v1_log="${submit_dir}/${label}_v1_${stamp}.log"
-    local v4_log="${submit_dir}/${label}_v4_${stamp}.log"
+    local current_log="${submit_dir}/${label}_current_${stamp}.log"
 
     echo
     echo "======================================================================"
@@ -236,9 +243,9 @@ run_side_by_side_experiment() {
     echo "======================================================================"
 
     local v1_start
-    local v4_start
+    local current_start
     local -a v1_jobs
-    local -a v4_jobs
+    local -a current_jobs
     v1_start="$(date +%s)"
     submit_workflow "v1" "$yaml_path" "$label" "$v1_log"
     mapfile -t v1_jobs < <(extract_job_ids "$v1_log")
@@ -250,37 +257,37 @@ run_side_by_side_experiment() {
     echo "These include every v1 job printed by stats_trimmed.run: dataset,"
     echo "forecast chunk, merge, statistics, and cleanup jobs."
 
-    v4_start="$(date +%s)"
-    submit_workflow "v4" "$yaml_path" "$label" "$v4_log"
-    mapfile -t v4_jobs < <(extract_job_ids "$v4_log")
-    if [[ "${#v4_jobs[@]}" -eq 0 ]]; then
-        echo "Error: no SLURM job IDs captured for $label v4" >&2
+    current_start="$(date +%s)"
+    submit_workflow "current" "$yaml_path" "$label" "$current_log"
+    mapfile -t current_jobs < <(extract_job_ids "$current_log")
+    if [[ "${#current_jobs[@]}" -eq 0 ]]; then
+        echo "Error: no SLURM job IDs captured for $label current" >&2
         exit 1
     fi
-    echo "Captured ${#v4_jobs[@]} v4 SLURM job ID(s) for $label."
+    echo "Captured ${#current_jobs[@]} current SLURM job ID(s) for $label."
 
     local v1_job_list
-    local v4_job_list
+    local current_job_list
     v1_job_list="$(IFS=,; echo "${v1_jobs[*]}")"
-    v4_job_list="$(IFS=,; echo "${v4_jobs[*]}")"
-    wait_for_experiment_jobs "$label" "$v1_start" "$v4_start" \
-        "$v1_job_list" "$v4_job_list" "${#v1_jobs[@]}" "${#v4_jobs[@]}"
+    current_job_list="$(IFS=,; echo "${current_jobs[*]}")"
+    wait_for_experiment_jobs "$label" "$v1_start" "$current_start" \
+        "$v1_job_list" "$current_job_list" "${#v1_jobs[@]}" "${#current_jobs[@]}"
 
     local v1_output_status="OK"
-    local v4_output_status="OK"
+    local current_output_status="OK"
     validate_workflow_outputs "v1" "$yaml_path" "$label" || v1_output_status="MISSING"
-    validate_workflow_outputs "v4" "$yaml_path" "$label" || v4_output_status="MISSING"
+    validate_workflow_outputs "current" "$yaml_path" "$label" || current_output_status="MISSING"
 
     echo
     echo "Completed $label experiment"
     local result_index
     result_index="$((${#result_labels[@]} - 1))"
     echo "  v1 elapsed: $(elapsed_hms "${result_v1_seconds[$result_index]}")"
-    echo "  v4 elapsed: $(elapsed_hms "${result_v4_seconds[$result_index]}")"
+    echo "  current elapsed: $(elapsed_hms "${result_current_seconds[$result_index]}")"
     echo "  v1 outputs: $v1_output_status"
-    echo "  v4 outputs: $v4_output_status"
+    echo "  current outputs: $current_output_status"
     result_v1_outputs+=("$v1_output_status")
-    result_v4_outputs+=("$v4_output_status")
+    result_current_outputs+=("$current_output_status")
 }
 
 print_summary() {
@@ -289,13 +296,13 @@ print_summary() {
     echo "STEP 12 OLD VS NEW TIMING SUMMARY"
     echo "======================================================================"
     printf '%-12s %-14s %-14s %-14s %-10s %-10s\n' \
-        "Experiment" "v1 elapsed" "v4 elapsed" "v4-v1" "v1 files" "v4 files"
+        "Experiment" "v1 elapsed" "current" "current-v1" "v1 files" "current"
 
     local i
     for i in "${!result_labels[@]}"; do
         local v1="${result_v1_seconds[$i]}"
-        local v4="${result_v4_seconds[$i]}"
-        local delta="$((v4 - v1))"
+        local current="${result_current_seconds[$i]}"
+        local delta="$((current - v1))"
         local delta_text
         if ((delta < 0)); then
             local abs_delta="$((-delta))"
@@ -306,17 +313,17 @@ print_summary() {
         printf '%-12s %-14s %-14s %-14s %-10s %-10s\n' \
             "${result_labels[$i]}" \
             "$(elapsed_hms "$v1")" \
-            "$(elapsed_hms "$v4")" \
+            "$(elapsed_hms "$current")" \
             "$delta_text" \
             "${result_v1_outputs[$i]}" \
-            "${result_v4_outputs[$i]}"
+            "${result_current_outputs[$i]}"
     done
 }
 
 require_file "$short_yaml"
 require_file "$long_yaml"
-require_file "${repo_dir}/v1/stats_trimmed.run"
-require_file "${repo_dir}/v4/sbatch_stats_v4.run"
+require_file "${repo_dir}/archives/legacy_versions/v1/stats_trimmed.run"
+require_file "${repo_dir}/sbatch_stats.run"
 
 echo "Step 12 old vs new workflow comparison"
 echo "Repo: $repo_dir"

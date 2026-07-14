@@ -1,8 +1,8 @@
 #!/bin/csh -f
 
-# v4 allocation-node entrypoint.
-# Runs the full Python pipeline directly inside the current allocation.
-# Dataset/statistics chunk parallelism happens inside this one process tree.
+# Login-node entrypoint.
+# Submits one SLURM job that runs the full Python pipeline inside one
+# allocation. Dataset/statistics chunk parallelism happens inside that job.
 
 source /usr/share/lmod/lmod/init/csh
 module load python/GEOSpyD
@@ -86,8 +86,8 @@ set pipeline_cpus = `grep -v '^[[:space:]]*#' ${versioned_yaml} | grep "pipeline
 set pipeline_gres = `grep -v '^[[:space:]]*#' ${versioned_yaml} | grep "pipeline_gres:" | awk '{print $2}' | sed 's/[#].*//'`
 
 if ("$pipeline_time" == "") set pipeline_time = "08:00:00"
-if ("$pipeline_mem" == "") set pipeline_mem = "450G"
-if ("$pipeline_cpus" == "") set pipeline_cpus = "48"
+if ("$pipeline_mem" == "") set pipeline_mem = "64G"
+if ("$pipeline_cpus" == "") set pipeline_cpus = "10"
 
 # Determine stats modes to run
 set stats_types = `grep -v '^[[:space:]]*#' ${versioned_yaml} | grep "stats_types:" | sed 's/.*stats_types:[[:space:]]*//' | sed 's/[[:space:]]*#.*//'`
@@ -105,47 +105,73 @@ endif
 
 echo "Stats types to run: $stats_types (regional=$run_regional, global=$run_global)"
 
-# Build one direct execution script for the allocated node.
-set pipeline_script = "${job_dir}/stats_pipeline_direct.j"
+# Build one SLURM script for the entire workflow.
+set pipeline_script = "${job_dir}/stats_pipeline.j"
 printf '#\041/bin/csh -e\n' > $pipeline_script
+echo "#SBATCH --job-name=stats_pipeline" >> $pipeline_script
+echo "#SBATCH --output=${log_dir}/stats_pipeline.%j.out" >> $pipeline_script
+echo "#SBATCH --time=${pipeline_time}" >> $pipeline_script
+echo "#SBATCH --account=${account}" >> $pipeline_script
+echo "#SBATCH --partition=${partition}" >> $pipeline_script
+echo "#SBATCH --qos=${qos}" >> $pipeline_script
+echo "#SBATCH --cpus-per-task=${pipeline_cpus}" >> $pipeline_script
+echo "#SBATCH --mem=${pipeline_mem}" >> $pipeline_script
+if ("$constraint" != "") then
+    echo "#SBATCH --constraint=${constraint}" >> $pipeline_script
+endif
+if ("$pipeline_gres" != "") then
+    echo "#SBATCH --gres=${pipeline_gres}" >> $pipeline_script
+endif
+echo "" >> $pipeline_script
 echo "source /usr/share/lmod/lmod/init/csh" >> $pipeline_script
 echo "module load python/GEOSpyD" >> $pipeline_script
 echo "cd ${work_dir}" >> $pipeline_script
 echo "" >> $pipeline_script
 
-# Run one v4 orchestrator command.
-echo "python -u ${work_dir}/stats_v4.py --config ${versioned_yaml} --pipeline --stats_types ${stats_types} --info_dir ${sts_dir}" >> $pipeline_script
-
-chmod +x $pipeline_script
+# Run one orchestrator command.
+echo "python -u ${work_dir}/stats.py --config ${versioned_yaml} --pipeline --stats_types ${stats_types} --info_dir ${sts_dir}" >> $pipeline_script
 
 if ($generate_only) then
     echo ""
     echo "Generate-only mode enabled."
-    echo "Created direct pipeline script: $pipeline_script"
-    echo "No workflow was executed. Re-run without --generate-only to execute one v4 pipeline."
+    echo "Created single pipeline job script: $pipeline_script"
+    echo "No jobs were submitted. Re-run without --generate-only to submit one pipeline job."
     exit 0
 endif
 
-echo ""
-echo "Starting single v4 pipeline directly on allocated node."
-echo "No external dependency chain or job array will be created."
-echo "Pipeline script: $pipeline_script"
-set direct_log = ${log_dir}/stats_v4_pipeline_direct.${timestamp}.out
-echo "Log file: $direct_log"
-echo ""
-
-bash -o pipefail -c "$pipeline_script 2>&1 | tee $direct_log"
-set pipeline_exit_code = $status
-
-if ($pipeline_exit_code != 0) then
-    echo ""
-    echo "Pipeline failed with exit code: $pipeline_exit_code"
-    echo "Pipeline script: $pipeline_script"
-    echo "Log file: $direct_log"
-    exit $pipeline_exit_code
+set pipeline_job_id = `sbatch --parsable $pipeline_script`
+if ($status != 0) then
+    echo "Error: Failed to submit pipeline job script: $pipeline_script"
+    exit 1
 endif
 
 echo ""
-echo "Single v4 pipeline completed successfully."
-echo "Pipeline script: $pipeline_script"
-echo "Log file: $direct_log"
+echo "Submitted single pipeline job successfully."
+echo "No external dependency chain or job array was created."
+echo "Job ID: $pipeline_job_id"
+echo "Job script: $pipeline_script"
+set pipeline_log_file = "${log_dir}/stats_pipeline.${pipeline_job_id}.out"
+echo "Log file: $pipeline_log_file"
+
+if ($?FOLLOW_LOG) then
+    if ("$FOLLOW_LOG" == "0") then
+        exit 0
+    endif
+endif
+
+echo ""
+echo "Streaming log output."
+echo "Press Ctrl+C to stop watching; the SLURM job will continue."
+echo ""
+
+tail -n +1 -F "$pipeline_log_file" &
+set tail_pid = $!
+
+while (`squeue -j "$pipeline_job_id" -h | wc -l` != 0)
+    sleep 10
+end
+
+sleep 5
+kill "$tail_pid" >& /dev/null
+wait >& /dev/null
+echo "Job $pipeline_job_id finished."

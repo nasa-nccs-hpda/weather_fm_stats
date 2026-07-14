@@ -1,4 +1,4 @@
-﻿'''Single-forecast workflow controller boundary for v4.'''
+'''Single-forecast workflow controller boundary.'''
 
 from controller.cli_controller import main
 

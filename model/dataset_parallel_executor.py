@@ -1,4 +1,4 @@
-'''Dataset parallel execution helpers for v4 pipeline mode.'''
+'''Dataset parallel execution helpers for pipeline mode.'''
 
 import contextlib
 import io

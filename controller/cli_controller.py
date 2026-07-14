@@ -146,9 +146,9 @@ def parse_arguments():
     '''Parse command line arguments'''
     parser = argparse.ArgumentParser(
         description=(
-            'Run the v4 weather statistics pipeline. The normal v4 path is '
-            '--pipeline, usually launched by sbatch_stats_v4.run or '
-            'salloc_stats_v4.run. Lower-level dataset, statistics, and merge '
+            'Run the weather statistics pipeline. The normal path is '
+            '--pipeline, usually launched by sbatch_stats.run or '
+            'salloc_stats.run. Lower-level dataset, statistics, and merge '
             'flags are kept for debugging, recovery, and manual reruns.'
         ),
     )
@@ -162,7 +162,7 @@ def parse_arguments():
                         help=('Directory to save output files (for single '
                               'forecast mode)'))
     parser.add_argument('--pipeline', action='store_true',
-                        help=('Run the end-to-end single-job v4 pipeline '
+                        help=('Run the end-to-end single-job pipeline '
                               '(normal production path)'))
     parser.add_argument('--stats_types',
                         choices=['regional', 'global', 'both'],
@@ -173,7 +173,7 @@ def parse_arguments():
     parser.add_argument('--pipeline_branch_execution',
                         choices=['sequential'],
                         help=('Pipeline branch execution mode '
-                              '(v4 supports sequential regional/global '
+                              '(the pipeline supports sequential regional/global '
                               'branches only)'))
     parser.add_argument('--pipeline_resume_mode',
                         choices=['off', 'safe'],
@@ -708,7 +708,7 @@ def write_pipeline_summary(info_dir, runtime_settings, branch_results,
     dataset_statuses = dataset_statuses or {}
     dataset_files = dataset_files or {}
     with open(summary_path, 'w', encoding='utf-8') as f:
-        f.write('v4 pipeline summary\n')
+        f.write('pipeline summary\n')
         f.write(f'final_status: {final_status}\n')
         f.write(f'pipeline_wall_seconds: {pipeline_wall_seconds}\n')
         f.write(f'stats_types: {runtime_settings.stats_types}\n')
@@ -1058,7 +1058,7 @@ def run_pipeline_mode(args, single_fcst_mode):
     if runtime_settings.stats_types in ['global', 'both']:
         requested_branches.append('global')
 
-    print('[INFO] Statistics branch execution is sequential in v4')
+    print('[INFO] Statistics branch execution is sequential')
     print(f'[INFO] Requested statistics branch order: '
           f'{", ".join(requested_branches)}')
 

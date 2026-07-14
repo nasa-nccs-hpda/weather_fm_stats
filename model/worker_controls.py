@@ -1,4 +1,4 @@
-'''Shared worker-limit resolution helpers for the v4 pipeline.'''
+'''Shared worker-limit resolution helpers for the pipeline.'''
 
 import os
 
