@@ -164,22 +164,29 @@ echo "Streaming log output."
 echo "Press Ctrl+C to stop watching; the SLURM job will continue."
 echo ""
 
-bash -c 'log_file="$1"; job_id="$2";
-echo "Waiting for log file to appear...";
-while [[ ! -f "$log_file" ]]; do
-    if [[ -z "$(squeue -j "$job_id" -h 2>/dev/null)" ]]; then
-        echo "Job $job_id finished before the log file appeared.";
-        exit 0;
-    fi;
-    sleep 2;
-done;
-echo "Log file is ready.";
-tail -n +1 -F "$log_file" &
-tail_pid=$!;
-while [[ -n "$(squeue -j "$job_id" -h 2>/dev/null)" ]]; do
-    sleep 10;
-done;
-sleep 5;
-kill "$tail_pid" >/dev/null 2>&1 || true;
-wait "$tail_pid" >/dev/null 2>&1 || true;
-echo "Job $job_id finished."' follow-log "$pipeline_log_file" "$pipeline_job_id"
+set follow_script = "${job_dir}/follow_pipeline_log.sh"
+printf '#!/usr/bin/env bash\n' > $follow_script
+echo 'set -u' >> $follow_script
+echo 'log_file="$1"' >> $follow_script
+echo 'job_id="$2"' >> $follow_script
+echo 'echo "Waiting for log file to appear..."' >> $follow_script
+echo 'while [[ ! -f "$log_file" ]]; do' >> $follow_script
+echo '    if [[ -z "$(squeue -j "$job_id" -h 2>/dev/null)" ]]; then' >> $follow_script
+echo '        echo "Job $job_id finished before the log file appeared."' >> $follow_script
+echo '        exit 0' >> $follow_script
+echo '    fi' >> $follow_script
+echo '    sleep 2' >> $follow_script
+echo 'done' >> $follow_script
+echo 'echo "Log file is ready."' >> $follow_script
+echo 'tail -n +1 -F "$log_file" &' >> $follow_script
+echo 'tail_pid=$!' >> $follow_script
+echo 'while [[ -n "$(squeue -j "$job_id" -h 2>/dev/null)" ]]; do' >> $follow_script
+echo '    sleep 10' >> $follow_script
+echo 'done' >> $follow_script
+echo 'sleep 5' >> $follow_script
+echo 'kill "$tail_pid" >/dev/null 2>&1 || true' >> $follow_script
+echo 'wait "$tail_pid" >/dev/null 2>&1 || true' >> $follow_script
+echo 'echo "Job $job_id finished."' >> $follow_script
+chmod +x $follow_script
+
+$follow_script "$pipeline_log_file" "$pipeline_job_id"
