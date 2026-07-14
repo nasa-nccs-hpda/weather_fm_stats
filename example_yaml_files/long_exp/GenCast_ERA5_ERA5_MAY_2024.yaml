@@ -12,8 +12,8 @@ parameters:
   # stats options [comma-separated lists]
     levels: [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50] # pressure levels hPa
     3d_vars_default: [Q, T, U, V, Z] # chosen from among [H, Q, T, U, V, W, Z]
-    2d_vars_default: # chosen from among [P, PS]
-    2d_vars_slices: [T2m, U10m, V10m, D2m, P, PS]  # chosen from among [Q2m, T2m, U10m, V10m, D2m]
+    2d_vars_default: [P] # chosen from among [P, PS]
+    2d_vars_slices: [T2m, U10m, V10m]  # GenCast files do not include D2m, PS, or Q2m
     regions: [GLO, NHE, TRO, SHE] # chosen from among [GLO, NHE, TRO, SHE, NWQ, NEQ, SWQ, SEQ, NAM, EUR, NPO, SPO, XPO, CUS, LND, NHL, TRL, SHL]
 
     # run stats_regional (for corcmp) and/or stats_global (for syscmp)? [regional, global, both, or none]
@@ -66,13 +66,13 @@ parameters:
     delta_lon: 2.5  # longitude increment
 
   # aliases (add to these case-insensitive lists if your fcst/ana/clim variables have names that aren't already listed)
-    H_alias: [h, hght, hgtprs, hgt, gh]
+    H_alias: [h, hght, hgtprs, hgt, gh, z]
     Q_alias: [q, qv, sphu, spfh]
     T_alias: [t, tmpu, tmpprs, tmp]
     U_alias: [u, uwnd, ugrdprs, ugrd]
     V_alias: [v, vwnd, vgrdprs, vgrd]
     W_alias: [w, omega, wwind, vvel]
-    Z_alias: [z]
+    Z_alias: [z, h, hght, hgtprs, hgt, gh]
     P_alias: [slp, slprs, prmsl, msl]
     T2m_alias: [t2m, t2, tmp_2m, 2t]
     Q2m_alias: [q2m, q2, qv2m, qv2, spfh_2m]

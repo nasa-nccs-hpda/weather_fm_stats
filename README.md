@@ -8,6 +8,8 @@ Agentic development of scientific weather model stats. This code is designed to 
 
 The normal v4 workflow is a single SLURM job with in-process parallelism for dataset and statistics chunks. Use `sbatch_stats_v4.run` from a login node, or `salloc_stats_v4.run` inside an existing allocation. Lower-level Python flags are intended for debugging, merge recovery, and manual reruns.
 
+Currently, v4 outputs go to v4/outputs. In the future this will be changed to a single central location, after the versions are cleaned up.
+
 ### Option 1: from login node
 
 Format:
@@ -49,6 +51,24 @@ chmod +x salloc_stats_v4.run
 ## Supported models
 
 Supported ML models are GenCast, AIFS, Prithvi. Supported reanalysis/climatology models are GEOSFP, MERRA2, and ERA5. Note: different models will have different file globbing/date organization patterns. To have these loaded correctly, look at the example .yaml files for help.
+
+Variable availability can also differ by forecast model. For example, the GenCast example files provide `H`, `QV`, `T`, `U`, `V`, `SLP`, `T2M`, `U10M`, and `V10M`, but not `D2M`, `PS`, or `Q2M`; the long GenCast example therefore omits `D2m` and `PS`, uses `P` from `SLP`, and maps requested `Z` through the available `H` field.
+
+## Modifying YAML Files
+
+Start from the closest file in `example_yaml_files/short_exp` or `example_yaml_files/long_exp`, then edit only the fields needed for the experiment.
+
+To change the date range, update `start_date`, `end_date`, `fcst_length`, `fcst_interval`, and `fcst_spacing`. Use `exclude_dates` when specific initialization dates should be skipped.
+
+To change models, update `fcst_model`, `ana_model`, `clim_model`, and the matching input directories/templates. Model-specific file layouts vary, so copy the path/template block from an existing example for that model when possible. Also update `expver` to match the forecast model name and set `verify` to the intended verification label.
+
+To change variables, edit `3d_vars_default`, `2d_vars_default`, and `2d_vars_slices`. Keep variables in the collection where the model actually provides them. For example, some models provide `P` in the default 2D collection while others expose surface variables through `slices`. If the same comparison variable is stored under a different source name, keep the requested output variable name and add or adjust aliases.
+
+To add aliases, edit the `*_alias` lists near the bottom of the YAML. Aliases are case-insensitive names that may appear in source NetCDF files. The example YAMLs share a broad alias set so the same requested variable can be found across models with different naming conventions.
+
+Other common configuration options include `regions`, `stats_types`, `dir_loc` for searching existing processed datasets, `pipeline_cpus`, `pipeline_mem`, worker counts, chunk sizes, and `pipeline_log_level` (normal, verbose, or debug).
+
+**Some model/variable/date combinations may fail because files are missing, variables are unavailable, pressure levels do not match, or a requested variable cannot be calculated from available dependencies. The pipeline logs include validation errors that identify what went wrong, such as missing files, missing variables, missing pressure levels, or failed calculated-variable dependencies.**
 
 ## Comparison between original code and v4
 
