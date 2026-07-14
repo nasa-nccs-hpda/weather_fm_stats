@@ -164,14 +164,22 @@ echo "Streaming log output."
 echo "Press Ctrl+C to stop watching; the SLURM job will continue."
 echo ""
 
-tail -n +1 -F "$pipeline_log_file" &
-set tail_pid = $!
-
-while (`squeue -j "$pipeline_job_id" -h | wc -l` != 0)
-    sleep 10
-end
-
-sleep 5
-kill "$tail_pid" >& /dev/null
-wait >& /dev/null
-echo "Job $pipeline_job_id finished."
+bash -c 'log_file="$1"; job_id="$2";
+echo "Waiting for log file to appear...";
+while [[ ! -f "$log_file" ]]; do
+    if [[ -z "$(squeue -j "$job_id" -h 2>/dev/null)" ]]; then
+        echo "Job $job_id finished before the log file appeared.";
+        exit 0;
+    fi;
+    sleep 2;
+done;
+echo "Log file is ready.";
+tail -n +1 -F "$log_file" &
+tail_pid=$!;
+while [[ -n "$(squeue -j "$job_id" -h 2>/dev/null)" ]]; do
+    sleep 10;
+done;
+sleep 5;
+kill "$tail_pid" >/dev/null 2>&1 || true;
+wait "$tail_pid" >/dev/null 2>&1 || true;
+echo "Job $job_id finished."' follow-log "$pipeline_log_file" "$pipeline_job_id"
