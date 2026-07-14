@@ -150,4 +150,21 @@ echo "Submitted single v4 pipeline job successfully."
 echo "No external dependency chain or job array was created."
 echo "Job ID: $pipeline_job_id"
 echo "Job script: $pipeline_script"
-echo "Log file: ${log_dir}/stats_v4_pipeline.${pipeline_job_id}.out"
+set pipeline_log_file = "${log_dir}/stats_v4_pipeline.${pipeline_job_id}.out"
+echo "Log file: $pipeline_log_file"
+echo ""
+echo "Streaming log output."
+echo "Press Ctrl+C to stop watching; the SLURM job will continue."
+echo ""
+
+tail -n +1 -F "$pipeline_log_file" &
+set tail_pid = $!
+
+while (`squeue -j "$pipeline_job_id" -h | wc -l` != 0)
+    sleep 10
+end
+
+sleep 5
+kill "$tail_pid" >& /dev/null
+wait >& /dev/null
+echo "Job $pipeline_job_id finished."
