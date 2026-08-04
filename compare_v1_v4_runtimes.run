@@ -6,6 +6,15 @@ short_yaml="${repo_dir}/example_yaml_files/short_exp/AIFS_ERA5_ERA5_MAY_2024.yam
 long_yaml="${repo_dir}/example_yaml_files/long_exp/AIFS_ERA5_ERA5_MAY_2024.yaml"
 poll_seconds="${STEP12_POLL_SECONDS:-30}"
 
+if [[ "${COMPARE_V1_V4_LOG_ACTIVE:-0}" != "1" ]]; then
+    log_dir="${repo_dir}/logs"
+    mkdir -p "$log_dir"
+    transcript_log="${log_dir}/compare_v1_v4_runtimes_$(date +%Y%m%d_%H%M%S).log"
+    echo "Writing comparison transcript to: $transcript_log"
+    COMPARE_V1_V4_LOG_ACTIVE=1 "$0" "$@" 2>&1 | tee "$transcript_log"
+    exit "${PIPESTATUS[0]}"
+fi
+
 declare -a result_labels=()
 declare -a result_v1_seconds=()
 declare -a result_current_seconds=()
