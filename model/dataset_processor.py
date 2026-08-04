@@ -1,14 +1,5 @@
 ﻿'''Dataset processing model.'''
 
-import warnings
-
-warnings.filterwarnings(
-    'ignore',
-    message='Latitude is outside of \\[-90, 90\\]',
-    category=UserWarning,
-    module='xesmf.backend',
-)
-
 import calendar
 import gc
 import glob
@@ -23,12 +14,12 @@ import metpy.calc as mpcalc
 import numpy as np
 import pandas as pd
 import xarray as xr
-import xesmf as xe
 from metpy.units import units
 from scipy.interpolate import RegularGridInterpolator
 
 from model.config_model import DuplicateKeysError, SafeLoaderWithDuplicateKeyCheck
 from model.constants import *
+from model.dataset_regridder import DatasetRegridder
 
 # ================== DATASET PROCESSING CLASS ==================
 
@@ -121,8 +112,8 @@ class BatchDatasetProcessor:
         # Parse template collections
         self.template_colls = self._parse_template_colls(config)
 
-        # Initialize regridder cache
-        self.regridders = {}
+        # Compose regridding behavior outside the dataset coordinator.
+        self.dataset_regridder = DatasetRegridder(self.target_grid)
 
         # Process search directories (ensure it is a list)
         dir_loc = config.get('dir_loc', [])
@@ -690,39 +681,6 @@ class BatchDatasetProcessor:
             'valid_YYYYMMDD': valid_time.strftime('%Y%m%d'),
             'valid_YYYYMMDDHH': valid_time.strftime('%Y%m%d%H')
         }
-
-    def _get_regridder(self, source_ds, grid_type, collections=None):
-        '''Retrieve or create regridder for given source dataset'''
-        lat_key = source_ds.lat.shape[0] if 'lat' in source_ds.dims else 0
-        lon_key = source_ds.lon.shape[0] if 'lon' in source_ds.dims else 0
-        regridder_key = f'{grid_type}_{lat_key}x{lon_key}'
-        if regridder_key not in self.regridders:
-            print(f'    Creating regridder for {grid_type}')
-            try:
-                # Use conservative_normed for correcy polar handling
-                regridder = xe.Regridder(
-                    source_ds, self.target_grid, 'conservative_normed',
-                    periodic=True)
-                self.regridders[regridder_key] = regridder
-            except Exception as e:
-                print(f'    [ERROR] Regridder creation failed: {e}')
-                return None
-        return self.regridders[regridder_key]
-
-    def _make_regrid_input_contiguous(self, data_array):
-        '''Return a C-contiguous DataArray for xESMF regridding.'''
-        values = data_array.data
-        try:
-            if hasattr(values, 'flags') and values.flags['C_CONTIGUOUS']:
-                return data_array
-            contiguous_values = np.ascontiguousarray(values)
-            return xr.DataArray(contiguous_values,
-                                coords=data_array.coords,
-                                dims=data_array.dims,
-                                attrs=data_array.attrs,
-                                name=data_array.name)
-        except Exception:
-            return data_array
 
     def _get_file_by_templates(self, templates: List[str], base_dir: str,
                                date_vars: Dict[str, str], context_info: str,
@@ -1605,14 +1563,16 @@ class BatchDatasetProcessor:
             ds_levels = ds
 
         # Get regridder
-        regridder = self._get_regridder(ds_levels, file_type,
-                                        colls_for_file)
+        regridder = self.dataset_regridder.get_regridder(ds_levels, file_type)
         if regridder is None:
             print(f'[ERROR] Failed to create regridder for {file_type}')
             return {}, []
 
-        # Process variables, including dependencies for calculated variables
-        regridded_vars = {}
+        # Collect variables, including dependencies for calculated variables.
+        # They are regridded together to reduce xESMF call overhead.
+        vars_to_regrid = {}
+        source_names = {}
+        dependency_sources = {}
         # Define standardized coords (for cross-collection diffs and shifts)
         if file_type == 'clim':
             std_coords = np.arange(1, 13, dtype=np.int32)  # 1-12 for months
@@ -1626,40 +1586,48 @@ class BatchDatasetProcessor:
                             target_var].items():
                         # Only process dependencies for collections in file
                         if (dep_info['collection'] in colls_for_file
-                            and dep_var not in regridded_vars):
+                            and dep_var not in vars_to_regrid):
                             dep_source = dep_info['alias']
-                            try:
-                                regrid_input = (
-                                    self._make_regrid_input_contiguous(
-                                        ds_levels[dep_source]))
-                                regridded_data = regridder(regrid_input)
-                                if 'time' in regridded_data.coords:
-                                    regridded_data = (
-                                        regridded_data.assign_coords(
-                                            time=std_coords))
-                                regridded_vars[dep_var] = regridded_data
-                                print(f'  [INFO] Processed dependency '
-                                      f'{dep_var} (alias: {dep_source}) for '
-                                      f'calculated variable {target_var}')
-                            except Exception as e:
-                                # Propagate the error up
-                                raise ValueError(f'Failed to process '
-                                                 f'dependency {dep_var} '
-                                                 f'({dep_source}) for '
-                                                 f'calculated variable '
-                                                 f'{target_var}: {str(e)}')
+                            vars_to_regrid[dep_var] = ds_levels[dep_source]
+                            source_names[dep_var] = dep_source
+                            dependency_sources[dep_var] = (
+                                target_var, dep_source)
                 continue  # Skip the calculated variable itself
-            try:
-                regrid_input = self._make_regrid_input_contiguous(
-                    ds_levels[source_var])
-                regridded_data = regridder(regrid_input)
-                if 'time' in regridded_data.coords:
-                    regridded_data = (
-                        regridded_data.assign_coords(time=std_coords))
-                regridded_vars[target_var] = regridded_data
-            except Exception as e:
-                print(f'[ERROR] Failed to regrid {target_var} ({source_var}): '
-                      f'{str(e)}')
+            vars_to_regrid[target_var] = ds_levels[source_var]
+            source_names[target_var] = source_var
+
+        try:
+            regridded_vars = self.dataset_regridder.regrid_variable_map(
+                regridder, vars_to_regrid, std_coords=std_coords)
+        except Exception as batch_error:
+            print(f'[WARN] Batch regridding failed for {file_type}; falling '
+                  f'back to per-variable regridding: {batch_error}')
+            regridded_vars = {}
+            for target_var, data_array in vars_to_regrid.items():
+                try:
+                    regridded_vars[target_var] = (
+                        self.dataset_regridder.regrid_single_variable(
+                            regridder, data_array, std_coords=std_coords))
+                except Exception as e:
+                    if target_var in dependency_sources:
+                        calc_var, dep_source = dependency_sources[target_var]
+                        raise ValueError(f'Failed to process dependency '
+                                         f'{target_var} ({dep_source}) for '
+                                         f'calculated variable {calc_var}: '
+                                         f'{str(e)}')
+                    source_var = source_names.get(target_var, target_var)
+                    print(f'[ERROR] Failed to regrid {target_var} '
+                          f'({source_var}): {str(e)}')
+
+        for dep_var, (calc_var, dep_source) in dependency_sources.items():
+            if dep_var in regridded_vars:
+                print(f'  [INFO] Processed dependency {dep_var} '
+                      f'(alias: {dep_source}) for calculated variable '
+                      f'{calc_var}')
+            else:
+                raise ValueError(f'Failed to process dependency {dep_var} '
+                                 f'({dep_source}) for calculated variable '
+                                 f'{calc_var}')
 
         return regridded_vars, colls_for_file
 
