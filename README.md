@@ -8,7 +8,24 @@ Working repo for creating weather model stats. This code is designed to create f
 
 The normal workflow is a single SLURM job with in-process parallelism for dataset and statistics chunks. Use `sbatch_stats.run` from a login node. Lower-level Python flags are intended for debugging, merge recovery, and manual reruns.
 
-Pipeline outputs are written to `outputs/` at the repository root.
+Pipeline outputs are written to `outputs/` at the repository root. Expected outputs wil look like: 
+
+```text
+  outputs/
+  ├── stats_{fcst_model}_{ana_model}_{clim_model}_{start_date}-{end_date}_{timestamp}/
+  │   ├── jobs/        # copied YAML config, generated SLURM scripts, helper scripts
+  │   ├── logs/        # SLURM/Python pipeline logs
+  │   ├── tmp/         # temporary chunk outputs used during processing
+  │   └── run_summary.txt
+  ├── fcst_{fcst_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
+  ├── ana_{ana_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
+  ├── clim_{clim_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
+  ├── stats_regional_{fcst_model}_{ana_model}_{clim_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
+  └── stats_global_{fcst_model}_{ana_model}_{clim_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
+```
+
+The `stats_..._{timestamp}/` directory is run-specific metadata and scratch space. The root-level `.nc4` files are the reusable forecast, analysis,
+climatology, regional statistics, and global statistics products.
 
 ### Running the workflow
 
