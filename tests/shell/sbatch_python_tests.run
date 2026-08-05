@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+tests_dir="${repo_dir}/tests/python"
+logs_dir="${repo_dir}/tests/logs"
+timestamp="$(date +%Y%m%d_%H%M%S)"
+job_script="${logs_dir}/python_tests_${timestamp}.j"
+job_log="${logs_dir}/python_tests_%j.out"
+
+account="${TEST_ACCOUNT:-ilab}"
+partition="${TEST_PARTITION:-gpu_a100}"
+qos="${TEST_QOS:-alla100}"
+constraint="${TEST_CONSTRAINT:-rome}"
+time_limit="${TEST_TIME:-00:30:00}"
+mem="${TEST_MEM:-16G}"
+cpus="${TEST_CPUS:-4}"
+
+mkdir -p "${logs_dir}"
+
+if [[ ! -d "${tests_dir}" ]]; then
+    echo "Error: test directory not found: ${tests_dir}" >&2
+    exit 1
+fi
+
+if ! find "${tests_dir}" -maxdepth 1 -type f -name '*.py' | grep -q .; then
+    echo "Error: no Python test files found under ${tests_dir}" >&2
+    exit 1
+fi
+
+cat > "${job_script}" <<EOF
+#!/usr/bin/env bash
+#SBATCH --job-name=weather_stats_tests
+#SBATCH --output=${job_log}
+#SBATCH --time=${time_limit}
+#SBATCH --account=${account}
+#SBATCH --partition=${partition}
+#SBATCH --qos=${qos}
+#SBATCH --cpus-per-task=${cpus}
+#SBATCH --mem=${mem}
+EOF
+
+if [[ -n "${constraint}" ]]; then
+    echo "#SBATCH --constraint=${constraint}" >> "${job_script}"
+fi
+
+cat >> "${job_script}" <<'EOF'
+
+set -euo pipefail
+
+source /usr/share/lmod/lmod/init/bash
+module load python/GEOSpyD
+
+cd "${SLURM_SUBMIT_DIR}"
+export PYTHONPATH="${SLURM_SUBMIT_DIR}:${PYTHONPATH:-}"
+
+echo "Weather stats Python regression tests"
+echo "Repo: ${SLURM_SUBMIT_DIR}"
+echo "Python: $(command -v python)"
+python --version
+echo
+
+mapfile -t test_files < <(find tests/python -maxdepth 1 -type f -name '*.py' | sort)
+
+if [[ "${#test_files[@]}" -eq 0 ]]; then
+    echo "Error: no Python test files found under tests/python" >&2
+    exit 1
+fi
+
+for test_file in "${test_files[@]}"; do
+    echo "======================================================================"
+    echo "RUNNING ${test_file}"
+    echo "======================================================================"
+    python -m pytest "${test_file}"
+done
+
+echo
+echo "[SUCCESS] All Python regression tests passed."
+EOF
+
+chmod +x "${job_script}"
+
+echo "Submitting Python regression tests."
+echo "Job script: ${job_script}"
+echo "Log pattern: ${job_log}"
+
+job_id="$(cd "${repo_dir}" && sbatch --parsable "${job_script}")"
+echo "Submitted test job: ${job_id}"
+echo "Log file: ${logs_dir}/python_tests_${job_id}.out"
