@@ -75,6 +75,33 @@ Other common configuration options include `regions`, `stats_types`, `dir_loc` f
 
 **Some model/variable/date combinations may fail because files are missing, variables are unavailable, pressure levels do not match, or a requested variable cannot be calculated from available dependencies. The pipeline logs include validation errors that identify what went wrong, such as missing files, missing variables, missing pressure levels, or failed calculated-variable dependencies.**
 
+## Regression Testing
+
+Fast Python regression tests live under `tests/python`. These tests should use synthetic data or small mocked inputs where possible, so they can check core logic without requiring SLURM jobs, Discover-only data paths, or full end-to-end workflow runs.
+
+Run Python regression tests directly with:
+
+```bash
+python -m pytest tests/python
+```
+
+On Discover/HPC, run the Python regression tests through SLURM with:
+
+```bash
+chmod +x tests/shell/sbatch_python_tests.run
+./tests/shell/sbatch_python_tests.run
+```
+
+The SLURM wrapper loads the Python module stack, sets `PYTHONPATH` to the repository root, runs every Python test file under `tests/python`, and writes job scripts/logs under `tests/logs`.
+
+Common wrapper overrides:
+
+```bash
+TEST_TIME=01:00:00 TEST_MEM=32G TEST_CPUS=8 ./tests/shell/sbatch_python_tests.run
+```
+
+Use `compare_v1_v4_runtimes.run` separately for full workflow regression checks against the archived v1 implementation. That script submits short and long v1/current jobs, checks expected outputs, and prints timing comparisons. It is useful for periodic validation, but it is slower and more sensitive to SLURM scheduling than the Python regression tests.
+
 ## Comparison between original code and current pipeline
 
 Below is an example run comparing long and short experiments for the archived original `v1` code and the current single-job pipeline. There are slight timing differences between each run, due to SLURM scheduling. This experiment was run on 2026-07-09. In this run, the current pipeline was faster for both example workflows while keeping the cleaner single-job structure.
