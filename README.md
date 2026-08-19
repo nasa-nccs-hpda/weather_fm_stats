@@ -2,7 +2,29 @@
 
 Working repo for creating weather model stats. This code is designed to create forecast/reanalysis/climatology datasets from raw netCDF files, then use those three datasets to create global/regional stats files for those datasets. The goal is to create fast, modular code that can support many different models, pressure levels, variables, dates, and so on.
 
+## Main changes to repo from original source code
+
+1. SLURM array job parallelization was changed to use a single SLURM job, and parallelize within the Python code.
+
+  - Dataset parallelization is implemented differently for each dataset type (parallelization code is found under `model/dataset_parallel_executor.py`). fcst datasets use chunked processing by init_date;  data also uses chunking by valid_date; clim chunking was found to be unstable, and was left unparallelized.
+  - Stats parallel execution uses chunking by init_date, similar to fcst datasets (code is found under `statistics_parallel_executor.py`). Regional and global stats do NOT run in parallel though, this was found to be unstable as well. Regional stats run first, then global.
+  - Chunking behavior (used by fcst/ana datasets and both stats types) is largely controlled by the parallel executor files (`model/dataset_parallel_executor.py`, `model/statistics_parallel_executor.py`). These are supported by the `model/chunk_plan.py` file (contains formulaic chunking code), as well as the `model/worker_controls.py` (determines Python parallel worker counts based on YAML file and compute given by SLURM).
+
+2. Behaviors were moved from being in a single file to being in several focused files. The common "model/view/controller" code organization setup was used to inspire the structure of this code.
+
+  - Model code controls the actual scientific behavior of the code.
+  - View code is usually intended for a user interface or similar interactable code, but this is left virtually empty since we are using the command-line.
+  - Controller code serves as the high-level "orchestration" of the code; it organizes how the code flows from start to finish, and leaves the details to the model code.
+
+3. Code was made to be more modular, using object-oriented programming. This means that for certain tasks, we define a class (or "object") to perform that task and that task only. Previously, we had classes like BatchDatasetProcessor and StatisticsProcessor that performed many different tasks at once. This has been streamlined, so that when people wish to edit a single behavior of the code (such as how we regrid variables, or how we parallelize dataset creation) they can just edit a single class that performs that single behavior.
+
+  - **Note:** this point is mostly true for this version of the code, but not every single part of the code is entirely modular in the most recent code version. This was mainly done in the interest of time, but to write the most modular code more behaviors would have to be separated and more classes/.py files created.
+
+4. Configuration options are largely still left to the YAML files (see `example_yaml_files` directory for up-to-date examples). Other configuration options, such as variable names, stats to calculate, etc have been moved to `model/constants.py`. This makes adding more stats types, pressure levels, or variable names easy in the future. For example, the default code only calculates `['f', 'acorr', 'rms']` stats for global stats, which can help speed up code a lot.
+
 ## Repository Structure
+
+### Code structure quickstart
 
 The current code is split into smaller files so that each file has a narrower job than the original single-file v1 workflow. You do not need to understand every file before making a useful change. A good first pass is:
 
@@ -14,46 +36,9 @@ The archived code (separated into versions v1/v2/v3) is kept under `archives/leg
 
 **Note:** you will often see the statistics workflow referred to as a "pipeline", this is a term to define  all of the steps the code takes from running the command with a .YAML file to getting stats output files.
 
-```text
-weather_fm_stats/
-  stats.py                         # starts the current Python pipeline
-  sbatch_stats.run                 # normal Discover SLURM submit script
-  salloc_stats.run                 # run inside an existing SLURM allocation
-  compare_v1_v4_runtimes.run       # compare archived v1 against current code
+### Repo structure Diagram
 
-  controller/
-    cli_controller.py              # reads CLI options and runs the pipeline phases
-    dataset_controller.py          # dataset-related command boundary
-    stats_controller.py            # statistics-related command boundary
-    merge_controller.py            # merge/recovery command boundary
-
-  model/
-    dataset_processor.py           # finds files, validates variables, builds datasets
-    dataset_regridder.py           # regrids fields onto the target grid
-    dataset_parallel_executor.py   # runs fcst/ana/clim dataset chunks in parallel
-    statistics_processor.py        # computes regional and global statistics
-    statistics_parallel_executor.py # runs regional/global statistics chunks in parallel
-    config_model.py                # reads YAML settings and runtime defaults
-    worker_controls.py             # chooses worker counts from YAML and SLURM limits
-    chunk_plan.py                  # splits dates into reproducible chunks
-    constants.py                   # variable names, aliases, regions, statistic names
-
-  view/
-    console_view.py                # small console-printing helpers
-
-  example_yaml_files/
-    short_exp/                     # short examples for quick testing
-    long_exp/                      # longer May 2024 examples
-
-  tests/
-    python/                        # fast regression tests
-    shell/                         # SLURM wrappers for tests on HPC
-
-  archives/
-    legacy_versions/               # old v1/v2/v3 code for comparison only
-```
-
-The normal run path is:
+These are the main set of files used in a stats workflow run (indented files represent code called by previous code):
 
 ```text
 sbatch_stats.run
@@ -64,6 +49,45 @@ sbatch_stats.run
           -> model/dataset_regridder.py
       -> model/statistics_parallel_executor.py
         -> model/statistics_processor.py
+```
+
+```text
+weather_fm_stats/
+  stats.py                           # starts the current Python pipeline
+  sbatch_stats.run                   # normal Discover SLURM submit script
+  salloc_stats.run                   # run inside an existing SLURM allocation
+  compare_v1_v4_runtimes.run         # compare archived v1 against current code
+
+  controller/
+    cli_controller.py                # reads CLI (command-line) options and runs pipeline phases
+    dataset_controller.py            # controls the high-level dataset (fcst/ana/clim) operations
+    stats_controller.py              # controls the high-level stats (reg/glo) operations
+    merge_controller.py              # controls the high-level merge operations
+
+  model/
+    dataset_processor.py             # finds files, validates variables, builds datasets
+    dataset_regridder.py             # regrids fields onto the target grid
+    dataset_parallel_executor.py     # runs fcst/ana/clim dataset chunks in parallel
+    statistics_processor.py          # computes regional and global statistics
+    statistics_parallel_executor.py  # runs regional/global statistics chunks in parallel
+    config_model.py                  # reads YAML settings and runtime defaults
+    worker_controls.py               # chooses worker counts from YAML and SLURM limits
+    chunk_plan.py                    # splits dates into deterministic chunks
+    constants.py                     # variable names, aliases, regions, statistic names
+
+  view/
+    console_view.py                  # small console-printing helpers
+
+  example_yaml_files/
+    short_exp/                       # short examples for quick testing
+    long_exp/                        # longer May 2024 examples
+
+  tests/
+    python/                          # fast regression tests
+    shell/                           # SLURM wrappers for tests on Discover
+
+  archives/
+    legacy_versions/                 # old v1/v2/v3 code for comparison only
 ```
 
 For most changes, this is the easiest place to start:
@@ -89,20 +113,20 @@ The main idea is that science-specific behavior usually lives in `model/`, while
 
 The normal workflow is a single SLURM job with in-process parallelism for dataset and statistics chunks. Use `sbatch_stats.run` from a login node. Lower-level Python flags are intended for debugging, merge recovery, and manual reruns.
 
-Pipeline outputs are written to `outputs/` at the repository root. Expected outputs wil look like:
+Pipeline outputs are written to `outputs/` at the repository root. Expected outputs will look like:
 
 ```text
   outputs/
-  ├── stats_{fcst_model}_{ana_model}_{clim_model}_{start_date}-{end_date}_{timestamp}/
-  │   ├── jobs/        # copied YAML config, generated SLURM scripts, helper scripts
-  │   ├── logs/        # SLURM/Python pipeline logs
-  │   ├── tmp/         # temporary chunk outputs used during processing
-  │   └── run_summary.txt
-  ├── fcst_{fcst_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
-  ├── ana_{ana_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
-  ├── clim_{clim_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
-  ├── stats_regional_{fcst_model}_{ana_model}_{clim_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
-  └── stats_global_{fcst_model}_{ana_model}_{clim_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
+  |-- stats_{fcst_model}_{ana_model}_{clim_model}_{start_date}-{end_date}_{timestamp}/
+  |   |-- jobs/        # copied YAML config, generated SLURM scripts, helper scripts
+  |   |-- logs/        # SLURM/Python pipeline logs
+  |   |-- tmp/         # temporary chunk outputs used during processing
+  |   `-- run_summary.txt
+  |-- fcst_{fcst_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
+  |-- ana_{ana_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
+  |-- clim_{clim_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
+  |-- stats_regional_{fcst_model}_{ana_model}_{clim_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
+  `-- stats_global_{fcst_model}_{ana_model}_{clim_model}_{start_date}-{end_date}_len{fcst_length}d_int{fcst_interval}h_spc{fcst_spacing}d_{Nlat}x{Nlon}.nc4
 ```
 
 The `stats_..._{timestamp}/` directory is run-specific metadata and scratch space. The root-level `.nc4` files are the reusable forecast, analysis,
@@ -187,7 +211,7 @@ Use `compare_v1_v4_runtimes.run` separately for full workflow regression checks 
 
 Below is an example run comparing long and short experiments for the archived original `v1` code and the current single-job pipeline. There are slight timing differences between each run, due to SLURM scheduling. This experiment was run on 2026-07-09. In this run, the current pipeline was faster for both example workflows while keeping the cleaner single-job structure.
 
-| Experiment | v1 elapsed | current elapsed | current-v1
-| :---: | :---: | :---: | :---:
-| short | 00:10:40 | 00:04:00 | -00:06:40
-| long | 00:27:11 | 00:19:01 | -00:08:10
+| Experiment | v1 elapsed | current elapsed | current-v1 |
+| :---: | :---: | :---: | :---: |
+| short | 00:10:40 | 00:04:00 | -00:06:40 |
+| long | 00:27:11 | 00:19:01 | -00:08:10 |
