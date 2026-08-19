@@ -114,6 +114,13 @@ class BatchDatasetProcessor:
 
         # Compose regridding behavior outside the dataset coordinator.
         self.dataset_regridder = DatasetRegridder(self.target_grid)
+        regrid_setting = config.get('regrid', 'per_var') or 'per_var'
+        self.regrid_mode = str(regrid_setting).strip().lower()
+        valid_regrid_modes = {'per_var', 'batch'}
+        if self.regrid_mode not in valid_regrid_modes:
+            raise ValueError(
+                f'Invalid regrid mode: {self.regrid_mode}. '
+                f'Expected one of: {sorted(valid_regrid_modes)}')
 
         # Process search directories (ensure it is a list)
         dir_loc = config.get('dir_loc', [])
@@ -1569,7 +1576,8 @@ class BatchDatasetProcessor:
             return {}, []
 
         # Collect variables, including dependencies for calculated variables.
-        # They are regridded together to reduce xESMF call overhead.
+        # The YAML regrid mode controls whether these are regridded one at a
+        # time or together in one xESMF call.
         vars_to_regrid = {}
         source_names = {}
         dependency_sources = {}
@@ -1596,28 +1604,21 @@ class BatchDatasetProcessor:
             vars_to_regrid[target_var] = ds_levels[source_var]
             source_names[target_var] = source_var
 
-        try:
-            regridded_vars = self.dataset_regridder.regrid_variable_map(
-                regridder, vars_to_regrid, std_coords=std_coords)
-        except Exception as batch_error:
-            print(f'[WARN] Batch regridding failed for {file_type}; falling '
-                  f'back to per-variable regridding: {batch_error}')
-            regridded_vars = {}
-            for target_var, data_array in vars_to_regrid.items():
-                try:
-                    regridded_vars[target_var] = (
-                        self.dataset_regridder.regrid_single_variable(
-                            regridder, data_array, std_coords=std_coords))
-                except Exception as e:
-                    if target_var in dependency_sources:
-                        calc_var, dep_source = dependency_sources[target_var]
-                        raise ValueError(f'Failed to process dependency '
-                                         f'{target_var} ({dep_source}) for '
-                                         f'calculated variable {calc_var}: '
-                                         f'{str(e)}')
-                    source_var = source_names.get(target_var, target_var)
-                    print(f'[ERROR] Failed to regrid {target_var} '
-                          f'({source_var}): {str(e)}')
+        if self.regrid_mode == 'batch':
+            try:
+                regridded_vars = self.dataset_regridder.regrid_variable_map(
+                    regridder, vars_to_regrid, std_coords=std_coords)
+            except Exception as batch_error:
+                print(f'[WARN] Batch regridding failed for {file_type}; '
+                      f'falling back to per-variable regridding: '
+                      f'{batch_error}')
+                regridded_vars = self._regrid_variables_per_var(
+                    regridder, vars_to_regrid, std_coords,
+                    dependency_sources, source_names)
+        else:
+            regridded_vars = self._regrid_variables_per_var(
+                regridder, vars_to_regrid, std_coords,
+                dependency_sources, source_names)
 
         for dep_var, (calc_var, dep_source) in dependency_sources.items():
             if dep_var in regridded_vars:
@@ -1630,6 +1631,27 @@ class BatchDatasetProcessor:
                                  f'{calc_var}')
 
         return regridded_vars, colls_for_file
+
+    def _regrid_variables_per_var(self, regridder, vars_to_regrid, std_coords,
+                                  dependency_sources, source_names):
+        '''Regrid variables one at a time.'''
+        regridded_vars = {}
+        for target_var, data_array in vars_to_regrid.items():
+            try:
+                regridded_vars[target_var] = (
+                    self.dataset_regridder.regrid_single_variable(
+                        regridder, data_array, std_coords=std_coords))
+            except Exception as e:
+                if target_var in dependency_sources:
+                    calc_var, dep_source = dependency_sources[target_var]
+                    raise ValueError(f'Failed to process dependency '
+                                     f'{target_var} ({dep_source}) for '
+                                     f'calculated variable {calc_var}: '
+                                     f'{str(e)}')
+                source_var = source_names.get(target_var, target_var)
+                print(f'[ERROR] Failed to regrid {target_var} '
+                      f'({source_var}): {str(e)}')
+        return regridded_vars
 
     def _regrid_multi_lead_datasets(self, multi_lead_datasets, needed_fhours,
                                     file_type, validation_result,
