@@ -2,13 +2,94 @@
 
 Working repo for creating weather model stats. This code is designed to create forecast/reanalysis/climatology datasets from raw netCDF files, then use those three datasets to create global/regional stats files for those datasets. The goal is to create fast, modular code that can support many different models, pressure levels, variables, dates, and so on.
 
+## Repository Structure
+
+The current code is split into smaller files so that each file has a narrower job than the original single-file v1 workflow. You do not need to understand every file before making a useful change. A good first pass is:
+
+1. Start with `sbatch_stats.run` to see how the workflow is launched on Discover.
+2. Look at `stats.py` and `controller/cli_controller.py` to see the high-level flow of the code.
+3. Look to edit files under `model/` if there is a scientific or data-processing behavior you want to change.
+
+The archived code (separated into versions v1/v2/v3) is kept under `archives/legacy_versions` for comparison, but they do not affect the current workflow.
+
+**Note:** you will often see the statistics workflow referred to as a "pipeline", this is a term to define  all of the steps the code takes from running the command with a .YAML file to getting stats output files.
+
+```text
+weather_fm_stats/
+  stats.py                         # starts the current Python pipeline
+  sbatch_stats.run                 # normal Discover SLURM submit script
+  salloc_stats.run                 # run inside an existing SLURM allocation
+  compare_v1_v4_runtimes.run       # compare archived v1 against current code
+
+  controller/
+    cli_controller.py              # reads CLI options and runs the pipeline phases
+    dataset_controller.py          # dataset-related command boundary
+    stats_controller.py            # statistics-related command boundary
+    merge_controller.py            # merge/recovery command boundary
+
+  model/
+    dataset_processor.py           # finds files, validates variables, builds datasets
+    dataset_regridder.py           # regrids fields onto the target grid
+    dataset_parallel_executor.py   # runs fcst/ana/clim dataset chunks in parallel
+    statistics_processor.py        # computes regional and global statistics
+    statistics_parallel_executor.py # runs regional/global statistics chunks in parallel
+    config_model.py                # reads YAML settings and runtime defaults
+    worker_controls.py             # chooses worker counts from YAML and SLURM limits
+    chunk_plan.py                  # splits dates into reproducible chunks
+    constants.py                   # variable names, aliases, regions, statistic names
+
+  view/
+    console_view.py                # small console-printing helpers
+
+  example_yaml_files/
+    short_exp/                     # short examples for quick testing
+    long_exp/                      # longer May 2024 examples
+
+  tests/
+    python/                        # fast regression tests
+    shell/                         # SLURM wrappers for tests on HPC
+
+  archives/
+    legacy_versions/               # old v1/v2/v3 code for comparison only
+```
+
+The normal run path is:
+
+```text
+sbatch_stats.run
+  -> stats.py
+    -> controller/cli_controller.py
+      -> model/dataset_parallel_executor.py
+        -> model/dataset_processor.py
+          -> model/dataset_regridder.py
+      -> model/statistics_parallel_executor.py
+        -> model/statistics_processor.py
+```
+
+For most changes, this is the easiest place to start:
+
+| If you want to... | Start here |
+| :--- | :--- |
+| Change YAML options, defaults, or worker settings | `model/config_model.py`, `model/worker_controls.py` |
+| Change how raw files are found, variables are validated, or datasets are assembled | `model/dataset_processor.py` |
+| Change regridding onto the target grid | `model/dataset_regridder.py`, then `model/dataset_processor.py` |
+| Change how forecast/analysis/climatology chunks run in parallel | `model/dataset_parallel_executor.py`, `model/chunk_plan.py` |
+| Change regional or global statistics calculations | `model/statistics_processor.py` |
+| Change statistics chunking or statistics worker counts | `model/statistics_parallel_executor.py` |
+| Change the overall pipeline order, phase summaries, or CLI flags | `controller/cli_controller.py` |
+| Change SLURM submission behavior | `sbatch_stats.run`, `salloc_stats.run` |
+| Add or update example YAML files | `example_yaml_files/short_exp`, `example_yaml_files/long_exp` |
+| Add regression tests | `tests/python` |
+
+The main idea is that science-specific behavior usually lives in `model/`, while workflow wiring lives in `controller/` and the root `.run` scripts. If you are unsure where a behavior lives, search for the printed log message or variable name you recognize from a run log.
+
 ## Workflow
 
 **Note: Workflow runs exclusively on the Discover cluster. The workflow requires a .yaml file to describe what experiment configuration you'd like to run. See `example_yaml_files` for formatting.**
 
 The normal workflow is a single SLURM job with in-process parallelism for dataset and statistics chunks. Use `sbatch_stats.run` from a login node. Lower-level Python flags are intended for debugging, merge recovery, and manual reruns.
 
-Pipeline outputs are written to `outputs/` at the repository root. Expected outputs wil look like: 
+Pipeline outputs are written to `outputs/` at the repository root. Expected outputs wil look like:
 
 ```text
   outputs/
