@@ -52,8 +52,8 @@ def import_batch_processor_class():
     return module.BatchDatasetProcessor
 
 
-def make_minimal_config():
-    return {
+def make_minimal_config(regrid=None):
+    config = {
         'fcst_model': 'TEST_FCST',
         'ana_model': 'TEST_ANA',
         'clim_model': 'TEST_CLIM',
@@ -70,6 +70,9 @@ def make_minimal_config():
         'clim_input_dir': '',
         'dir_loc': [],
     }
+    if regrid is not None:
+        config['regrid'] = regrid
+    return config
 
 
 def make_synthetic_dataset(num_3d_vars=4, num_2d_vars=3, time_name='time'):
@@ -175,11 +178,11 @@ def test_batch_and_fallback_paths_produce_equivalent_outputs():
     ds = make_synthetic_dataset(num_3d_vars=5, num_2d_vars=4)
     validation_result = make_validation_result(num_3d_vars=5, num_2d_vars=4)
 
-    batch_processor = processor_class(make_minimal_config())
+    batch_processor = processor_class(make_minimal_config(regrid='batch'))
     batch_regridder = IdentityRegridder()
     force_processor_regridder(batch_processor, batch_regridder)
 
-    fallback_processor = processor_class(make_minimal_config())
+    fallback_processor = processor_class(make_minimal_config(regrid='batch'))
     fallback_regridder = IdentityRegridder()
     force_processor_regridder(fallback_processor, fallback_regridder)
     force_batch_failure(fallback_processor)
@@ -195,7 +198,7 @@ def test_batch_and_fallback_paths_produce_equivalent_outputs():
 
 def test_batch_path_uses_one_regridder_call_for_mixed_2d_and_3d_variables():
     processor_class = import_batch_processor_class()
-    processor = processor_class(make_minimal_config())
+    processor = processor_class(make_minimal_config(regrid='batch'))
     regridder = IdentityRegridder()
     force_processor_regridder(processor, regridder)
 
@@ -208,9 +211,25 @@ def test_batch_path_uses_one_regridder_call_for_mixed_2d_and_3d_variables():
     assert regridder.calls == ['Dataset']
 
 
-def test_batch_path_normalizes_nonstandard_time_coordinate():
+def test_default_regrid_mode_is_per_variable():
     processor_class = import_batch_processor_class()
     processor = processor_class(make_minimal_config())
+    regridder = IdentityRegridder()
+    force_processor_regridder(processor, regridder)
+
+    ds = make_synthetic_dataset(num_3d_vars=2, num_2d_vars=1)
+    validation_result = make_validation_result(num_3d_vars=2, num_2d_vars=1)
+
+    output_vars = process_with_processor(processor, ds, validation_result)
+
+    assert processor.regrid_mode == 'per_var'
+    assert len(output_vars) == 3
+    assert regridder.calls == ['DataArray'] * 3
+
+
+def test_batch_path_normalizes_nonstandard_time_coordinate():
+    processor_class = import_batch_processor_class()
+    processor = processor_class(make_minimal_config(regrid='batch'))
     regridder = IdentityRegridder()
     force_processor_regridder(processor, regridder)
 
@@ -227,7 +246,7 @@ def test_batch_path_normalizes_nonstandard_time_coordinate():
 
 def test_calculated_variable_dependencies_are_regridded_but_not_calculated():
     processor_class = import_batch_processor_class()
-    processor = processor_class(make_minimal_config())
+    processor = processor_class(make_minimal_config(regrid='batch'))
     regridder = IdentityRegridder()
     force_processor_regridder(processor, regridder)
 
@@ -245,7 +264,7 @@ def test_calculated_variable_dependencies_are_regridded_but_not_calculated():
 
 def test_calculated_dependency_failure_still_raises_after_batch_fallback():
     processor_class = import_batch_processor_class()
-    processor = processor_class(make_minimal_config())
+    processor = processor_class(make_minimal_config(regrid='batch'))
     force_batch_failure(processor)
 
     class FailingSingleRegridder(IdentityRegridder):
@@ -270,3 +289,4 @@ def test_processor_can_import_and_initialize():
     processor_class = import_batch_processor_class()
     proc = processor_class(make_minimal_config())
     assert proc is not None
+    assert proc.regrid_mode == 'per_var'
