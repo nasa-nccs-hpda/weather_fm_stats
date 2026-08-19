@@ -4,39 +4,41 @@ Working repo for creating weather model stats. This code is designed to create f
 
 ## Main changes to repo from original source code
 
-1. SLURM array job parallelization was changed to use a single SLURM job, and parallelize within the Python code.
+##### Change 1: parallelization structure
+
+SLURM array job parallelization was changed to use a single SLURM job, and parallelize within the Python code.
 
   - Dataset parallelization is implemented differently for each dataset type (parallelization code is found under `model/dataset_parallel_executor.py`). fcst datasets use chunked processing by init_date;  data also uses chunking by valid_date; clim chunking was found to be unstable, and was left unparallelized.
   - Stats parallel execution uses chunking by init_date, similar to fcst datasets (code is found under `statistics_parallel_executor.py`). Regional and global stats do NOT run in parallel though, this was found to be unstable as well. Regional stats run first, then global.
   - Chunking behavior (used by fcst/ana datasets and both stats types) is largely controlled by the parallel executor files (`model/dataset_parallel_executor.py`, `model/statistics_parallel_executor.py`). These are supported by the `model/chunk_plan.py` file (contains formulaic chunking code), as well as the `model/worker_controls.py` (determines Python parallel worker counts based on YAML file and compute given by SLURM).
 
-2. Behaviors were moved from being in a single file to being in several focused files. The common "model/view/controller" code organization setup was used to inspire the structure of this code.
+##### Change 2: code structure
+
+Behaviors were moved from being in a single file to being in several focused files. The common "model/view/controller" code organization setup was used to inspire the structure of this code.
 
   - Model code controls the actual scientific behavior of the code.
   - View code is usually intended for a user interface or similar interactable code, but this is left virtually empty since we are using the command-line.
   - Controller code serves as the high-level "orchestration" of the code; it organizes how the code flows from start to finish, and leaves the details to the model code.
 
-3. Code was made to be more modular, using object-oriented programming. This means that for certain tasks, we define a class (or "object") to perform that task and that task only. Previously, we had classes like BatchDatasetProcessor and StatisticsProcessor that performed many different tasks at once. This has been streamlined, so that when people wish to edit a single behavior of the code (such as how we regrid variables, or how we parallelize dataset creation) they can just edit a single class that performs that single behavior.
+##### Change 3: code modularity/object-oriented code
+
+Code was made to be more modular, using object-oriented programming. This means that for certain tasks, we define a class (or "object") to perform that task and that task only. Previously, we had classes like BatchDatasetProcessor and StatisticsProcessor that performed many different tasks at once. This has been streamlined, so that when people wish to edit a single behavior of the code (such as how we regrid variables, or how we parallelize dataset creation) they can just edit a single class that performs that single behavior.
 
   - **Note:** this point is mostly true for this version of the code, but not every single part of the code is entirely modular in the most recent code version. This was mainly done in the interest of time, but to write the most modular code more behaviors would have to be separated and more classes/.py files created.
 
-4. Configuration options are largely still left to the YAML files (see `example_yaml_files` directory for up-to-date examples). Other configuration options, such as variable names, stats to calculate, etc have been moved to `model/constants.py`. This makes adding more stats types, pressure levels, or variable names easy in the future. For example, the default code only calculates `['f', 'acorr', 'rms']` stats for global stats, which can help speed up code a lot.
+##### Change 4: kept .yaml, moved configurable constants (vars, pressure lvls, etc)
+
+Configuration options are largely still left to the YAML files (see `example_yaml_files` directory for up-to-date examples). Other configuration options, such as variable names, stats to calculate, etc have been moved to `model/constants.py`. This makes adding more stats types, pressure levels, or variable names easy in the future. For example, the default code only calculates `['f', 'acorr', 'rms']` stats for global stats, which can help speed up code a lot.
 
 ## Repository Structure
 
-### Code structure quickstart
+### Quickstart
 
 The current code is split into smaller files so that each file has a narrower job than the original single-file v1 workflow. You do not need to understand every file before making a useful change. A good first pass is:
 
 1. Start with `sbatch_stats.run` to see how the workflow is launched on Discover.
 2. Look at `stats.py` and `controller/cli_controller.py` to see the high-level flow of the code.
 3. Look to edit files under `model/` if there is a scientific or data-processing behavior you want to change.
-
-The archived code (separated into versions v1/v2/v3) is kept under `archives/legacy_versions` for comparison, but they do not affect the current workflow.
-
-**Note:** you will often see the statistics workflow referred to as a "pipeline", this is a term to define  all of the steps the code takes from running the command with a .YAML file to getting stats output files.
-
-### Repo structure Diagram
 
 These are the main set of files used in a stats workflow run (indented files represent code called by previous code):
 
@@ -50,6 +52,12 @@ sbatch_stats.run
       -> model/statistics_parallel_executor.py
         -> model/statistics_processor.py
 ```
+
+The archived code (separated into versions v1/v2/v3) is kept under `archives/legacy_versions` for comparison, but they do not affect the current workflow.
+
+**Note:** you will often see the statistics workflow referred to as a "pipeline", this is a term to define  all of the steps the code takes from running the command with a .YAML file to getting stats output files.
+
+### Repo structure Diagram
 
 ```text
 weather_fm_stats/
