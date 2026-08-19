@@ -88,3 +88,4 @@ parameters:
     constraint: rome
     pipeline_cpus: 16
     pipeline_mem: 64G
+    regrid: per_var  # set to per_var or batch
