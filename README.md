@@ -184,6 +184,8 @@ To change variables, edit `3d_vars_default`, `2d_vars_default`, and `2d_vars_sli
 
 To add aliases, edit the `*_alias` lists near the bottom of the YAML. Aliases are case-insensitive names that may appear in source NetCDF files. The example YAMLs share a broad alias set so the same requested variable can be found across models with different naming conventions.
 
+To change regridding behavior, set `regrid` to `per_var` or `batch`. `per_var` regrids one variable at a time and is the safer default. `batch` sends multiple variables through xESMF together, which may be faster for some datasets but can behave differently for failure handling.
+
 Other common configuration options include `regions`, `stats_types`, `dir_loc` for searching existing processed datasets, `pipeline_cpus`, `pipeline_mem`, worker counts, chunk sizes, and `pipeline_log_level` (normal, verbose, or debug).
 
 **Some model/variable/date combinations may fail because files are missing, variables are unavailable, pressure levels do not match, or a requested variable cannot be calculated from available dependencies. The pipeline logs include validation errors that identify what went wrong, such as missing files, missing variables, missing pressure levels, or failed calculated-variable dependencies.**
